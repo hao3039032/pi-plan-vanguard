@@ -25,7 +25,7 @@ const SRT_SCRATCH_DIR_PATTERN = /^pi-plan-mode-scratch-[0-9a-f]{8}-[0-9a-f]{4}-[
 export const SRT_PROFILE_FILE_PATTERN =
   /^pi-plan-mode-srt-(?:doctor-)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/u;
 
-/** Secret locations denied for reads unless the user narrows the profile. */
+/** Secret locations denied for reads while credential hardening is on (the default). */
 export const DEFAULT_SRT_DENY_READ = [
   "~/.ssh",
   "~/.aws",
@@ -36,12 +36,83 @@ export const DEFAULT_SRT_DENY_READ = [
   "**/.env.*",
 ] as const;
 
+/**
+ * Identity stores denied for reads while credential hardening is on: CLI tokens, package-registry
+ * auth, container/cluster configs, password stores, AI CLI logins, and browser profiles (cookies).
+ * Together with the identity env-var scrub and srt's Unix-socket block (ssh-agent, keyrings), a
+ * sandboxed command can use the network anonymously but never as the user.
+ */
+export const CREDENTIAL_SRT_DENY_READ = [
+  "~/.config/gh",
+  "~/.config/hub",
+  "~/.git-credentials",
+  "~/.config/git/credentials",
+  "~/.npmrc",
+  "~/.yarnrc",
+  "~/.yarnrc.yml",
+  "~/.config/yarn",
+  "~/.bunfig.toml",
+  "~/.pypirc",
+  "~/.pip",
+  "~/.config/pip",
+  "~/.cargo/credentials",
+  "~/.cargo/credentials.toml",
+  "~/.gem/credentials",
+  "~/.composer/auth.json",
+  "~/.config/composer/auth.json",
+  "~/.docker/config.json",
+  "~/.kube",
+  "~/.terraform.d/credentials.tfrc.json",
+  "~/.vault-token",
+  "~/.azure",
+  "~/.oci",
+  "~/.config/doctl",
+  "~/.boto",
+  "~/.s3cfg",
+  "~/.config/rclone",
+  "~/.huggingface",
+  "~/.cache/huggingface/token",
+  "~/.config/op",
+  "~/.password-store",
+  "~/.local/share/keyrings",
+  "~/.codex",
+  "~/.claude/.credentials.json",
+  "~/.config/github-copilot",
+  "~/.mozilla",
+  "~/.config/google-chrome",
+  "~/.config/chromium",
+  "~/.config/BraveSoftware",
+  "~/.config/microsoft-edge",
+  "~/.config/vivaldi",
+  "~/Library/Keychains",
+  "~/Library/Cookies",
+  "~/Library/Application Support/Google/Chrome",
+  "~/Library/Application Support/Firefox",
+  "~/Library/Application Support/BraveSoftware",
+  "~/Library/Application Support/Microsoft Edge",
+] as const;
+
+/** Pi agent-dir files holding provider/MCP credentials, denied for reads while credential hardening is on. */
+export const AGENT_DIR_CREDENTIAL_FILES = ["auth.json", "mcp-auth.json", "models.json", "mcp.json"] as const;
+
+/**
+ * Private and carrier-grade NAT ranges an allowed hostname must not resolve to in open-network
+ * mode, on top of srt's built-in loopback/link-local/metadata/own-interface guard: intranet
+ * services that trust network location are part of the user's identity.
+ */
+export const PRIVATE_NETWORK_RANGES = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7"] as const;
+
+/** `open`: anonymous public internet (default); `allowlist`: only `allowedDomains` (empty = no network). */
+export type PlanSandboxNetworkMode = "open" | "allowlist";
+
 export interface SrtSandboxProfile {
   allowWrite: string[];
   /** Paths the sandbox may never write; srt gives denyWrite precedence over allowWrite. */
   denyWrite: string[];
   denyRead: string[];
   allowedDomains: string[];
+  network: PlanSandboxNetworkMode;
+  credentialHardening: boolean;
 }
 
 export interface PlanSandboxProfileInput {
@@ -57,15 +128,32 @@ export interface PlanSandboxProfileInput {
   allowWrite?: readonly string[];
   denyRead?: readonly string[];
   allowedDomains?: readonly string[];
+  /** Defaults to `open`. */
+  network?: PlanSandboxNetworkMode;
+  /** Defaults to true; false releases every built-in credential denial (user risk). */
+  credentialHardening?: boolean;
+  /** Pi agent dir whose credential files are denied for reads while hardening is on. */
+  agentDir?: string;
 }
 
 /** Build the Plan-mode srt profile: writes only in the output dir, scratch dir, and user extras; profile and settings files always write-denied. */
 export function buildPlanSandboxProfile(input: PlanSandboxProfileInput): SrtSandboxProfile {
+  const credentialHardening = input.credentialHardening ?? true;
+  const agentDir = input.agentDir;
+  const hardenedDenyRead = credentialHardening
+    ? [
+        ...DEFAULT_SRT_DENY_READ,
+        ...CREDENTIAL_SRT_DENY_READ,
+        ...(agentDir ? AGENT_DIR_CREDENTIAL_FILES.map((file) => join(agentDir, file)) : []),
+      ]
+    : [];
   return {
     allowWrite: dedupe([input.outputDir, ...(input.scratchDir ? [input.scratchDir] : []), ...(input.allowWrite ?? [])]),
     denyWrite: dedupe([input.profileDir, ...input.protectedPaths]),
-    denyRead: dedupe([...DEFAULT_SRT_DENY_READ, ...(input.denyRead ?? [])]),
+    denyRead: dedupe([...hardenedDenyRead, ...(input.denyRead ?? [])]),
     allowedDomains: dedupe(input.allowedDomains ?? []),
+    network: input.network ?? "open",
+    credentialHardening,
   };
 }
 
@@ -129,6 +217,8 @@ export interface SrtRuntimeDiagnosis {
 export interface SrtRuntimeProbeOptions {
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
+  /** Probe through the Plan-mode launcher (the path every sandboxed command takes); defaults to the bare srt CLI. */
+  launcher?: SrtLauncher & SrtLaunchPolicy;
   /** Replacement for the default spawn-based probe, for tests. */
   runProbe?: (srtCommand: string, settingsPath: string) => Promise<SrtProbeOutcome>;
   /** Replacement for PATH executable lookups (dependencies and package managers), for tests. */
@@ -148,28 +238,55 @@ export function shellQuoteSingle(value: string) {
  * private scratch directory is handed over through that variable. Setting TMPDIR on srt itself
  * would only move srt's own host-side sockets into the sandbox-writable scratch directory.
  */
-export function wrapCommandForSrt(command: string, srtPath: string, settingsPath: string, scratchDir: string) {
-  const quotedCommand = shellQuoteSingle(command);
-  const quotedSettings = shellQuoteSingle(settingsPath);
-  const quotedSrt = shellQuoteSingle(srtPath);
-  const quotedScratch = shellQuoteSingle(scratchDir);
-  if (
-    quotedCommand === undefined ||
-    quotedSettings === undefined ||
-    quotedSrt === undefined ||
-    quotedScratch === undefined
-  ) {
-    return undefined;
-  }
-  return `CLAUDE_CODE_TMPDIR=${quotedScratch} ${quotedSrt} -s ${quotedSettings} -c ${quotedCommand}`;
+export interface SrtLauncher {
+  /** Node (or compatible) runtime executing the launcher; normally `process.execPath`. */
+  nodePath: string;
+  /** Absolute path of `srt-launcher.mjs`. */
+  launcherPath: string;
+}
+
+export interface SrtLaunchPolicy {
+  network: PlanSandboxNetworkMode;
+  credentialHardening: boolean;
+}
+
+/** Launcher argv flags for a policy: open network approves every public host; hardening scrubs identity env vars. */
+export function srtLauncherFlags(policy: SrtLaunchPolicy) {
+  return [...(policy.network === "open" ? ["--open-network"] : []), ...(policy.credentialHardening ? ["--scrub-env"] : [])];
+}
+
+export function wrapCommandForSrt(
+  command: string,
+  sandbox: { srtPath: string; settingsPath: string; scratchDir: string } & SrtLaunchPolicy,
+  launcher: SrtLauncher,
+) {
+  const words = [
+    launcher.nodePath,
+    launcher.launcherPath,
+    "--srt",
+    sandbox.srtPath,
+    "--settings",
+    sandbox.settingsPath,
+    ...srtLauncherFlags(sandbox),
+    "-c",
+    command,
+  ].map(shellQuoteSingle);
+  const quotedScratch = shellQuoteSingle(sandbox.scratchDir);
+  if (quotedScratch === undefined || words.some((word) => word === undefined)) return undefined;
+  return `CLAUDE_CODE_TMPDIR=${quotedScratch} ${words.join(" ")}`;
 }
 
 export function buildSrtSettingsContents(profile: SrtSandboxProfile) {
+  const open = profile.network === "open";
   return `${JSON.stringify(
     {
       network: {
-        allowedDomains: profile.allowedDomains,
+        // Open mode keeps the allowlist empty and approves hosts through the launcher's ask callback,
+        // so traffic still crosses srt's proxy and its resolved-address guard.
+        allowedDomains: open ? [] : profile.allowedDomains,
         deniedDomains: [],
+        strictAllowlist: !open,
+        ...(open ? { deniedResolvedAddresses: [...PRIVATE_NETWORK_RANGES] } : {}),
       },
       filesystem: {
         denyRead: profile.denyRead,
@@ -259,10 +376,21 @@ function platformDependencies(platform: SrtPlatform) {
   return [];
 }
 
-function defaultRunProbe(srtCommand: string, settingsPath: string, timeoutMs: number): Promise<SrtProbeOutcome> {
+function defaultRunProbe(
+  srtCommand: string,
+  settingsPath: string,
+  timeoutMs: number,
+  launcher?: SrtLauncher & SrtLaunchPolicy,
+): Promise<SrtProbeOutcome> {
+  const [command, args] = launcher
+    ? [
+        launcher.nodePath,
+        [launcher.launcherPath, "--srt", srtCommand, "--settings", settingsPath, ...srtLauncherFlags(launcher), "-c", "exit 0"],
+      ]
+    : [srtCommand, ["-s", settingsPath, "-c", "exit 0"]];
   return new Promise((resolve) => {
     let settled = false;
-    const child = spawn(srtCommand, ["-s", settingsPath, "-c", "exit 0"], {
+    const child = spawn(command, args, {
       stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
     });
@@ -335,7 +463,9 @@ export async function diagnoseSrtRuntime(
   }
 
   const runProbe =
-    options.runProbe ?? ((command: string, settings: string) => defaultRunProbe(command, settings, options.timeoutMs ?? SRT_PROBE_TIMEOUT_MS));
+    options.runProbe ??
+    ((command: string, settings: string) =>
+      defaultRunProbe(command, settings, options.timeoutMs ?? SRT_PROBE_TIMEOUT_MS, options.launcher));
   const outcome = await runProbe(srtCommand, options.settingsPath);
   if (outcome.code === 0) {
     return { ok: true, platform, srtCommand, missingDependencies: [] };

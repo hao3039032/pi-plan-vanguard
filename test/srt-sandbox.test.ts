@@ -5,11 +5,13 @@ import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:f
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "vitest";
 import {
   buildPlanSandboxProfile,
   buildSrtSettingsContents,
   buildSrtSetupGuide,
+  CREDENTIAL_SRT_DENY_READ,
   createSrtScratchDir,
   describeSrtDiagnosis,
   diagnoseSrtRuntime,
@@ -20,12 +22,37 @@ import {
   removeSrtScratchDir,
   shellQuoteSingle,
   srtProfileSettingsPath,
+  type SrtSandboxProfile,
   wrapCommandForSrt,
   writeSrtProfile,
 } from "../src/srt-sandbox.js";
 
 const EMPTY_ENV = { PATH: "" };
 const SRT_COMMAND = process.env.PI_PLAN_MODE_SRT_PATH?.trim() || "srt";
+const LAUNCHER = {
+  nodePath: process.execPath,
+  launcherPath: fileURLToPath(new URL("../src/srt-launcher.mjs", import.meta.url)),
+};
+const ALLOWLIST_POLICY = { network: "allowlist" as const, credentialHardening: true };
+
+function emptyProfile(overrides: Partial<SrtSandboxProfile> = {}): SrtSandboxProfile {
+  return {
+    allowWrite: [],
+    denyWrite: [],
+    denyRead: [],
+    allowedDomains: [],
+    network: "allowlist",
+    credentialHardening: true,
+    ...overrides,
+  };
+}
+
+/** Absolute srt CLI path for the launcher (it resolves the library next to the real CLI). */
+function srtAbsolutePath() {
+  if (SRT_COMMAND.includes("/")) return SRT_COMMAND;
+  const which = spawnSync("/bin/sh", ["-c", `command -v ${SRT_COMMAND}`], { encoding: "utf8" });
+  return which.stdout.trim() || SRT_COMMAND;
+}
 
 /** Whether the real srt CLI can run a sandboxed command here (skips the real-sandbox regression test otherwise). */
 function srtIsRunnable() {
@@ -34,10 +61,7 @@ function srtIsRunnable() {
   try {
     directory = mkdtempSync(join(tmpdir(), "pi-plan-mode-srt-detect-"));
     const profile = join(directory, "profile.json");
-    writeFileSync(
-      profile,
-      buildSrtSettingsContents({ allowWrite: [], denyWrite: [], denyRead: [], allowedDomains: [] }),
-    );
+    writeFileSync(profile, buildSrtSettingsContents(emptyProfile()));
     const probe = spawnSync(SRT_COMMAND, ["-s", profile, "-c", "exit 0"], { stdio: "ignore", timeout: 10_000 });
     return probe.status === 0;
   } catch {
@@ -65,37 +89,78 @@ test("shellQuoteSingle wraps POSIX words and round-trips embedded quotes", () =>
   }
 });
 
-test("wrapCommandForSrt preserves the original command as one shell word", () => {
+const FAKE_LAUNCHER = { nodePath: "/usr/bin/node", launcherPath: "/ext/src/srt-launcher.mjs" };
+
+function sandboxFor(overrides: Record<string, unknown> = {}) {
+  return {
+    srtPath: "/usr/bin/srt",
+    settingsPath: "/agent/srt/settings.json",
+    scratchDir: "/tmp/pi-plan-mode-scratch-x",
+    ...ALLOWLIST_POLICY,
+    ...overrides,
+  } as Parameters<typeof wrapCommandForSrt>[1];
+}
+
+test("wrapCommandForSrt runs the command through the launcher as one shell word", () => {
   const command = "cat README.md | grep 'plan' > out.txt";
-  const wrapped = wrapCommandForSrt(command, "/usr/bin/srt", "/agent/srt/settings.json", "/tmp/pi-plan-mode-scratch-x");
+  const wrapped = wrapCommandForSrt(command, sandboxFor(), FAKE_LAUNCHER);
   assert.ok(wrapped);
   assert.equal(wrapped.split(" ")[0], `CLAUDE_CODE_TMPDIR='/tmp/pi-plan-mode-scratch-x'`);
-  assert.equal(wrapped.split(" ")[1], `'/usr/bin/srt'`);
-  assert.equal(wrapCommandForSrt("bad\u0000", "/usr/bin/srt", "/tmp/s.json", "/tmp/scratch"), undefined);
-  assert.equal(wrapCommandForSrt("true", "/usr/bin/srt", "/tmp/s.json", "/tmp/bad\u0000scratch"), undefined);
+  assert.equal(wrapped.split(" ")[1], `'/usr/bin/node'`);
+  assert.equal(wrapCommandForSrt("bad\u0000", sandboxFor(), FAKE_LAUNCHER), undefined);
+  assert.equal(wrapCommandForSrt("true", sandboxFor({ scratchDir: "/tmp/bad\u0000scratch" }), FAKE_LAUNCHER), undefined);
   // The wrapped line must parse back to the same arguments under sh -c.
-  const parsed = execFileSync("/bin/sh", ["-c", `set -- ${wrapped.replace(/^CLAUDE_CODE_TMPDIR=/u, "")}; printf '%s|%s|%s' "$1" "$3" "$6"`]).toString();
-  assert.equal(parsed, "/tmp/pi-plan-mode-scratch-x|-s|cat README.md | grep 'plan' > out.txt");
+  const parsed = execFileSync("/bin/sh", [
+    "-c",
+    `set -- ${wrapped.replace(/^CLAUDE_CODE_TMPDIR=\S+ /u, "")}; printf '%s|' "$@"`,
+  ]).toString();
+  assert.equal(
+    parsed,
+    "/usr/bin/node|/ext/src/srt-launcher.mjs|--srt|/usr/bin/srt|--settings|/agent/srt/settings.json|--scrub-env|-c|cat README.md | grep 'plan' > out.txt|",
+  );
 });
 
-test("wrapCommandForSrt tolerates quoteable srt paths with spaces", () => {
-  const wrapped = wrapCommandForSrt("true", "/opt/tools/srt bin/srt", "/tmp/s.json", "/tmp/scratch dir");
-  assert.ok(wrapped?.startsWith(`CLAUDE_CODE_TMPDIR='/tmp/scratch dir' '/opt/tools/srt bin/srt' -s`));
-  assert.ok(wrapped?.endsWith(` -c 'true'`));
+test("wrapCommandForSrt maps the network and hardening policy to launcher flags", () => {
+  const flagsOf = (overrides: Record<string, unknown>) => {
+    const wrapped = wrapCommandForSrt("true", sandboxFor(overrides), FAKE_LAUNCHER) as string;
+    return ["--open-network", "--scrub-env"].filter((flag) => wrapped.includes(`'${flag}'`));
+  };
+  assert.deepEqual(flagsOf({ network: "open", credentialHardening: true }), ["--open-network", "--scrub-env"]);
+  assert.deepEqual(flagsOf({ network: "open", credentialHardening: false }), ["--open-network"]);
+  assert.deepEqual(flagsOf({ network: "allowlist", credentialHardening: true }), ["--scrub-env"]);
+  assert.deepEqual(flagsOf({ network: "allowlist", credentialHardening: false }), []);
 });
 
-test("buildSrtSettingsContents emits the deny-by-default profile", () => {
-  const contents = buildSrtSettingsContents({
-    allowWrite: ["/tmp/pi-plan-mode-scratch-x", "/repo/plans"],
-    denyWrite: ["/agent/srt"],
-    denyRead: [...DEFAULT_SRT_DENY_READ],
-    allowedDomains: [],
-  });
+test("wrapCommandForSrt tolerates quoteable paths with spaces", () => {
+  const wrapped = wrapCommandForSrt(
+    "true",
+    sandboxFor({ srtPath: "/opt/tools/srt bin/srt", scratchDir: "/tmp/scratch dir" }),
+    { nodePath: "/opt/node bin/node", launcherPath: "/ext dir/srt-launcher.mjs" },
+  );
+  assert.ok(wrapped?.startsWith(`CLAUDE_CODE_TMPDIR='/tmp/scratch dir' '/opt/node bin/node' '/ext dir/srt-launcher.mjs' '--srt' '/opt/tools/srt bin/srt'`));
+  assert.ok(wrapped?.endsWith(` '-c' 'true'`));
+});
+
+test("buildSrtSettingsContents emits the allowlist and open network profiles", () => {
+  const contents = buildSrtSettingsContents(
+    emptyProfile({
+      allowWrite: ["/tmp/pi-plan-mode-scratch-x", "/repo/plans"],
+      denyWrite: ["/agent/srt"],
+      denyRead: [...DEFAULT_SRT_DENY_READ],
+    }),
+  );
   const parsed = JSON.parse(contents) as {
     network: { allowedDomains: string[]; deniedDomains: string[] };
     filesystem: { denyRead: string[]; allowRead: string[]; allowWrite: string[]; denyWrite: string[] };
   };
-  assert.deepEqual(parsed.network, { allowedDomains: [], deniedDomains: [] });
+  assert.deepEqual(parsed.network, { allowedDomains: [], deniedDomains: [], strictAllowlist: true });
+  const allowlisted = JSON.parse(buildSrtSettingsContents(emptyProfile({ allowedDomains: ["example.com"] })));
+  assert.deepEqual(allowlisted.network.allowedDomains, ["example.com"]);
+  // Open mode: empty allowlist (hosts approved by the launcher's ask callback) plus private ranges denied.
+  const open = JSON.parse(buildSrtSettingsContents(emptyProfile({ network: "open", allowedDomains: ["ignored.com"] })));
+  assert.deepEqual(open.network.allowedDomains, []);
+  assert.equal(open.network.strictAllowlist, false);
+  assert.deepEqual(open.network.deniedResolvedAddresses, ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7"]);
   assert.deepEqual(parsed.filesystem.allowWrite, ["/tmp/pi-plan-mode-scratch-x", "/repo/plans"]);
   assert.deepEqual(parsed.filesystem.allowRead, []);
   assert.deepEqual(parsed.filesystem.denyWrite, ["/agent/srt"]);
@@ -136,6 +201,21 @@ test("buildPlanSandboxProfile keeps the profile directory and settings unwritabl
   assert.deepEqual(widened.allowedDomains, ["api.github.com"]);
 });
 
+test("buildPlanSandboxProfile defaults to an open network with credential hardening", () => {
+  const base = { outputDir: "/repo/plans", profileDir: "/agent/srt", protectedPaths: [] };
+  const hardened = buildPlanSandboxProfile({ ...base, agentDir: "/home/user/.pi/agent", denyRead: ["/secret"] });
+  assert.equal(hardened.network, "open");
+  assert.equal(hardened.credentialHardening, true);
+  for (const path of [...DEFAULT_SRT_DENY_READ, ...CREDENTIAL_SRT_DENY_READ, "/home/user/.pi/agent/auth.json", "/secret"]) {
+    assert.ok(hardened.denyRead.includes(path), path);
+  }
+  assert.ok(hardened.denyRead.includes("~/.config/gh") && hardened.denyRead.includes("~/.npmrc"));
+  // Releasing credentials drops every built-in denial but keeps the user's own entries.
+  const released = buildPlanSandboxProfile({ ...base, agentDir: "/home/user/.pi/agent", denyRead: ["/secret"], credentialHardening: false });
+  assert.deepEqual(released.denyRead, ["/secret"]);
+  assert.equal(buildPlanSandboxProfile({ ...base, network: "allowlist" }).network, "allowlist");
+});
+
 test("scratch directories are private and removal only touches pi-plan-mode scratch paths", async () => {
   const scratchDir = await createSrtScratchDir();
   try {
@@ -163,12 +243,10 @@ test("srt profile files round-trip through write and removal", async () => {
     const profileDir = join(directory, "agent", "srt");
     const settingsPath = srtProfileSettingsPath(profileDir, randomUUID());
     assert.equal(dirname(settingsPath), profileDir);
-    await writeSrtProfile(settingsPath, {
-      allowWrite: [join(directory, "plans")],
-      denyWrite: [profileDir],
-      denyRead: [...DEFAULT_SRT_DENY_READ],
-      allowedDomains: [],
-    });
+    await writeSrtProfile(
+      settingsPath,
+      emptyProfile({ allowWrite: [join(directory, "plans")], denyWrite: [profileDir], denyRead: [...DEFAULT_SRT_DENY_READ] }),
+    );
     assert.equal((await stat(profileDir)).mode & 0o777, 0o700);
     assert.equal((await stat(settingsPath)).mode & 0o777, 0o600);
     const diagnosis = await diagnoseSrtRuntime({
@@ -366,12 +444,17 @@ test.skipIf(!srtIsRunnable())(
         profileDir,
         protectedPaths: [settingsFile],
         allowWrite: [agentDir],
+        network: "allowlist",
       });
       const settingsPath = srtProfileSettingsPath(profileDir, randomUUID());
       await writeSrtProfile(settingsPath, profile);
       const original = await readFile(settingsPath, "utf8");
       const run = (command: string) => {
-        const wrapped = wrapCommandForSrt(command, SRT_COMMAND, settingsPath, scratchDir as string);
+        const wrapped = wrapCommandForSrt(
+          command,
+          { srtPath: srtAbsolutePath(), settingsPath, scratchDir: scratchDir as string, ...ALLOWLIST_POLICY },
+          LAUNCHER,
+        );
         assert.ok(wrapped);
         return spawnSync("/bin/sh", ["-c", wrapped], { cwd: repo, encoding: "utf8", timeout: 2_000 });
       };
@@ -414,4 +497,68 @@ test.skipIf(!srtIsRunnable())(
   },
   // Two real sandbox launches (2 s cap each) stay within the repository's 5 s test-timeout cap.
   5_000,
+);
+
+test.skipIf(!srtIsRunnable())(
+  "real srt: open network blocks loopback, and hardening hides credentials and scrubs identity env vars",
+  async () => {
+    const { createServer } = await import("node:http");
+    const server = createServer((_request, response) => response.end("local-ok"));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as { port: number }).port;
+    const root = await mkdtemp(join(tmpdir(), "pi-plan-mode-srt-net-"));
+    let scratchDir: string | undefined;
+    try {
+      const fakeAgentDir = join(root, "agent");
+      await mkdir(fakeAgentDir, { recursive: true });
+      await writeFile(join(fakeAgentDir, "auth.json"), "{\"secret\":1}");
+      const outputDir = join(root, "plans");
+      await mkdir(outputDir, { recursive: true });
+      scratchDir = await createSrtScratchDir();
+      const profileDir = join(root, "srt");
+      const runWith = async (credentialHardening: boolean) => {
+        const profile = buildPlanSandboxProfile({
+          outputDir,
+          scratchDir,
+          profileDir,
+          protectedPaths: [],
+          agentDir: fakeAgentDir,
+          network: "open",
+          credentialHardening,
+        });
+        const settingsPath = srtProfileSettingsPath(profileDir, randomUUID());
+        await writeSrtProfile(settingsPath, profile);
+        const wrapped = wrapCommandForSrt(
+          [
+            `node -e "fetch('http://127.0.0.1:${port}').then(r=>r.text()).then(t=>console.log('LOOPBACK:'+t)).catch(()=>console.log('LOOPBACK:blocked'))"`,
+            `cat ${shellQuoteSingle(join(fakeAgentDir, "auth.json"))} >/dev/null 2>&1 && echo AUTH:readable || echo AUTH:denied`,
+            `echo "TOKEN:\${GH_TOKEN:-unset}" "AUTHOR:\${GIT_AUTHOR_NAME:-unset}"`,
+          ].join("; "),
+          { srtPath: srtAbsolutePath(), settingsPath, scratchDir: scratchDir as string, network: "open", credentialHardening },
+          LAUNCHER,
+        );
+        assert.ok(wrapped);
+        const run = spawnSync("/bin/sh", ["-c", wrapped], {
+          encoding: "utf8",
+          timeout: 4_000,
+          env: { ...process.env, GH_TOKEN: "fake-token", GIT_AUTHOR_NAME: "planner" },
+        });
+        return `${run.stdout}${run.stderr}`;
+      };
+      const hardened = await runWith(true);
+      assert.match(hardened, /LOOPBACK:blocked/u, hardened);
+      assert.match(hardened, /AUTH:denied/u, hardened);
+      assert.match(hardened, /TOKEN:unset/u, hardened);
+      assert.match(hardened, /AUTHOR:planner/u, hardened);
+      const released = await runWith(false);
+      assert.match(released, /LOOPBACK:blocked/u, released);
+      assert.match(released, /AUTH:readable/u, released);
+      assert.match(released, /TOKEN:fake-token/u, released);
+    } finally {
+      server.close();
+      await removeSrtScratchDir(scratchDir);
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  10_000,
 );

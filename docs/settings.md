@@ -15,7 +15,7 @@
 
 ## ⚙️ Settings
 
-Run `/plan settings` or open **Settings** from an inactive `/plan` menu to edit **Plan thinking**, **Plan policy tools**, **Delegation agents**, **Delegation scripts**, **Plan reinjection**, **Fresh model**, **Fresh thinking**, **Export destination**, **Plan output dir**, **Sandbox write paths**, **Sandbox deny-read**, **Sandbox network**, and **Plan mode shortcut**.
+Run `/plan settings` or open **Settings** from an inactive `/plan` menu to edit **Plan thinking**, **Plan policy tools**, **Delegation agents**, **Delegation scripts**, **Plan reinjection**, **Fresh model**, **Fresh thinking**, **Export destination**, **Plan output dir**, **Sandbox write paths**, **Sandbox deny-read**, **Sandbox network**, **Allowlist domains**, **Credential hardening**, and **Plan mode shortcut**.
 You can also edit `$PI_CODING_AGENT_DIR/pi-plan-vanguard.json` (normally `~/.pi/agent/pi-plan-vanguard.json`) manually.
 The optional file is read at session start, watched for changes, and created only by an explicit Settings save or manual edit.
 The shortcut is disabled when `toggleShortcut` is omitted.
@@ -36,6 +36,8 @@ The shortcut is disabled when `toggleShortcut` is omitted.
   "planSandbox": {
     "allowWrite": ["/absolute/extra-cache"],
     "denyRead": ["~/.secrets"],
+    "network": "open",
+    "credentialHardening": true,
     "allowedDomains": []
   },
   "toggleShortcut": "<your_key>"
@@ -182,16 +184,23 @@ The `plan_mode_complete` result echoes the plan with a `📄 <path>` footer, and
 ### Sandbox profile
 
 `planSandbox` tunes the srt OS sandbox that every Plan-mode `bash` call runs in.
-All three keys are optional string arrays; entries must be non-empty and are deduplicated in first-seen order.
+The list keys (`allowWrite`, `denyRead`, `allowedDomains`) are optional string arrays whose entries must be non-empty and are deduplicated in first-seen order; `network` is `"open"` or `"allowlist"`, and `credentialHardening` is a boolean.
+
+The design rule is: sandboxed commands may use the public internet, but never the user's identity.
+
+- `network` (default `"open"`) allows anonymous access to the public internet. Plan mode drives srt through its library API (`src/srt-launcher.mjs`, because the srt CLI only accepts explicit domain lists) and approves every hostname through srt's ask callback, so traffic still crosses srt's proxy inside a separate network namespace: srt's resolved-address guard keeps loopback, link-local, cloud-metadata, and this host's own addresses blocked, and Plan mode adds the private and carrier-grade NAT ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`, `fc00::/7`). `"allowlist"` restores the strict mode where only `allowedDomains` is reachable; an empty list denies all network access.
+- `credentialHardening` (default `true`) keeps identity out of the sandbox: the built-in secret defaults and an extended list of credential stores are denied for reads (CLI tokens such as `~/.config/gh`, `~/.git-credentials`, `~/.npmrc`, `~/.pypirc`, cargo/gem/composer credentials, `~/.docker/config.json`, `~/.kube`, cloud CLIs, `~/.password-store`, keyrings, Codex/Claude/Copilot logins, browser profiles, and the Pi agent's `auth.json`/`mcp-auth.json`/`models.json`/`mcp.json`), and identity-bearing environment variables (names containing `TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `ACCESS_KEY`, `PRIVATE_KEY`, `CREDENTIAL`, `COOKIE`, or `AUTH`, plus `KUBECONFIG`, `DOCKER_CONFIG`, `XAUTHORITY`, `DBUS_SESSION_BUS_ADDRESS`, …) are removed before the command starts. `false` drops every built-in credential denial and the env scrub — sandboxed commands can then act as you, entirely at your own risk; your own `denyRead` entries still apply.
+- srt's seccomp filter blocks Unix sockets in every mode (ssh-agent, gpg-agent, keyrings, `docker.sock`), because a socket could bypass the filesystem sandbox.
 
 - `allowWrite` adds extra writable absolute paths. The resolved plan output directory and a private per-workflow scratch directory (`<os tmpdir>/pi-plan-mode-scratch-<uuid>`, mode 0700, exported to commands as `TMPDIR` and removed when the workflow ends) are always writable and cannot be removed; `/tmp` itself is read-only. The pi agent directory (including the srt profile directory `<agent dir>/srt` and session files) and the pi-plan-vanguard settings files (all filenames, current and legacy) are always in the profile's `denyWrite`, which srt applies with precedence over `allowWrite`, so no `allowWrite` entry can let a sandboxed command rewrite its own profile or settings.
-- `denyRead` adds extra read-denied paths on top of the built-in secret defaults (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.netrc`, `**/.env`, `**/.env.*`).
-- `allowedDomains` allows network access from the sandbox (wildcards like `*.npmjs.org`); the default empty list denies every domain.
+- `denyRead` adds extra read-denied paths on top of the built-in defaults (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.netrc`, `**/.env`, `**/.env.*`, and the credential-hardening list while it is on).
+- `allowedDomains` lists the hosts reachable in `"allowlist"` mode (wildcards like `*.npmjs.org`); it is ignored while the network is open.
 
 Paths follow srt syntax (`~` expands to the home directory, gitignore-style globs on macOS).
-Treat `allowWrite` and `allowedDomains` as real security decisions: they widen what arbitrary sandboxed commands may write and which hosts they may reach.
+Treat `allowWrite` and `credentialHardening: false` as real security decisions: they widen what arbitrary sandboxed commands may write and whose identity they may use.
+A resumed workflow keeps its frozen network mode and hardening only when they are no wider than the current settings (an open network needs the current settings to be open; released credentials need them released).
 Set `PI_PLAN_MODE_SRT_PATH` to use an srt binary outside `PATH`; run `/plan doctor` to check the effective profile and runtime health.
-A non-object `planSandbox`, unknown keys, or non-string-array values invalidate the entire settings file and trigger the normal warning/default fallback on session start.
+A non-object `planSandbox`, unknown keys, non-string-array list values, a `network` other than `"open"`/`"allowlist"`, or a non-boolean `credentialHardening` invalidate the entire settings file and trigger the normal warning/default fallback on session start.
 
 ### Thinking level
 

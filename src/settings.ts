@@ -86,6 +86,10 @@ export interface PlanSandboxSettings {
   allowWrite?: string[];
   denyRead?: string[];
   allowedDomains?: string[];
+  /** `open` (default): anonymous public internet; `allowlist`: only allowedDomains (empty = no network). */
+  network?: "open" | "allowlist";
+  /** Default true: deny reads of credential stores and scrub identity env vars; false releases them (user risk). */
+  credentialHardening?: boolean;
 }
 export interface PlanModeSettings {
   thinkingLevel: PlanModeThinkingLevel;
@@ -282,17 +286,27 @@ function normalizePlanOutputDir(value: unknown) {
   return normalized;
 }
 
+const PLAN_SANDBOX_KEYS = new Set(["allowWrite", "denyRead", "allowedDomains", "network", "credentialHardening"]);
+
 function normalizePlanSandbox(value: unknown): PlanSandboxSettings | undefined {
   if (!isSettingsDocument(value)) return undefined;
-  if (Object.keys(value).some((key) => key !== "allowWrite" && key !== "denyRead" && key !== "allowedDomains")) {
-    return undefined;
-  }
+  if (Object.keys(value).some((key) => !PLAN_SANDBOX_KEYS.has(key))) return undefined;
   const settings: PlanSandboxSettings = {};
   for (const key of ["allowWrite", "denyRead", "allowedDomains"] as const) {
     if (!Object.hasOwn(value, key)) continue;
     const list = normalizePlanSandboxList(Reflect.get(value, key));
     if (!list) return undefined;
     settings[key] = list;
+  }
+  if (Object.hasOwn(value, "network")) {
+    const network = Reflect.get(value, "network");
+    if (network !== "open" && network !== "allowlist") return undefined;
+    settings.network = network;
+  }
+  if (Object.hasOwn(value, "credentialHardening")) {
+    const credentialHardening = Reflect.get(value, "credentialHardening");
+    if (typeof credentialHardening !== "boolean") return undefined;
+    settings.credentialHardening = credentialHardening;
   }
   return Object.keys(settings).length > 0 ? settings : undefined;
 }
@@ -586,6 +600,16 @@ export function configuredPlanOutputDir(settings: PlanModeSettings) {
 
 export function configuredPlanSandbox(settings: PlanModeSettings): PlanSandboxSettings {
   return settings.planSandbox ?? {};
+}
+
+/** Sandbox network mode; open (anonymous public internet) unless the user chose the allowlist. */
+export function configuredSandboxNetwork(settings: PlanModeSettings): "open" | "allowlist" {
+  return settings.planSandbox?.network ?? "open";
+}
+
+/** Credential hardening; on unless the user explicitly released credentials. */
+export function configuredCredentialHardening(settings: PlanModeSettings): boolean {
+  return settings.planSandbox?.credentialHardening !== false;
 }
 
 /** Trusted agent names Plan mode auto-admits for read-only delegation calls. */

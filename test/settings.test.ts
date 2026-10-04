@@ -9,7 +9,9 @@ import {
   configuredImplementationPlanRetention,
   configuredImplementationThinkingLevel,
   configuredPlanExportPath,
+  configuredCredentialHardening,
   configuredPlanModeToggleShortcut,
+  configuredSandboxNetwork,
   normalizePlanModeSettings,
   readPlanModeSettings,
   updatePlanModeSettings,
@@ -529,6 +531,39 @@ test("Plan-mode settings read legacy files without modifying them", async () => 
   } finally {
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("planSandbox network mode and credential hardening validate and persist", async () => {
+  assert.deepEqual(normalizePlanModeSettings({ planSandbox: { network: "allowlist", credentialHardening: false } }), {
+    thinkingLevel: "inherit",
+    planSandbox: { network: "allowlist", credentialHardening: false },
+  });
+  assert.deepEqual(normalizePlanModeSettings({ planSandbox: { network: "open" } }), {
+    thinkingLevel: "inherit",
+    planSandbox: { network: "open" },
+  });
+  assert.equal(normalizePlanModeSettings({ planSandbox: { network: "everything" } }), undefined);
+  assert.equal(normalizePlanModeSettings({ planSandbox: { credentialHardening: "off" } }), undefined);
+  assert.equal(configuredSandboxNetwork({ thinkingLevel: "inherit" }), "open");
+  assert.equal(configuredCredentialHardening({ thinkingLevel: "inherit" }), true);
+  assert.equal(configuredCredentialHardening({ thinkingLevel: "inherit", planSandbox: { credentialHardening: false } }), false);
+
+  const directory = await mkdtemp(join(tmpdir(), "pi-plan-vanguard-network-"));
+  try {
+    const settingsPath = join(directory, "pi-plan-vanguard.json");
+    const saved = await updatePlanModeSettings(
+      { planSandbox: { allowedDomains: ["example.com"], network: "allowlist", credentialHardening: false } },
+      { settingsPath },
+    );
+    assert.deepEqual(saved.planSandbox, { allowedDomains: ["example.com"], network: "allowlist", credentialHardening: false });
+    assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")).planSandbox, {
+      allowedDomains: ["example.com"],
+      network: "allowlist",
+      credentialHardening: false,
+    });
+  } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });

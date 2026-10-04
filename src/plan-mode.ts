@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, watch } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   type ExtensionAPI,
   type ExtensionCommandContext,
@@ -92,6 +93,7 @@ import {
   removeSrtProfile,
   removeSrtScratchDir,
   srtProfileSettingsPath,
+  type SrtLauncher,
   type SrtRuntimeDiagnosis,
   type SrtSandboxProfile,
   writeSrtProfile,
@@ -115,11 +117,13 @@ import {
 import {
   awaitPlanModeSettingsWrites,
   configuredImplementationPlanRetention,
+  configuredCredentialHardening,
   configuredPlanAdmitWorkflowScripts,
   configuredPlanAdmittedAgents,
   configuredPlanModeToggleShortcut,
   configuredPlanOutputDir,
   configuredPlanSandbox,
+  configuredSandboxNetwork,
   configuredThinkingLevel,
   type ImplementationPlanRetention,
   type PlanModeSettings,
@@ -159,6 +163,11 @@ const BLOCKED_MUTATING_TOOLS = new Set(["edit", "write"]);
 /** Subdirectory of the pi agent dir holding srt profiles; never sandbox-writable. */
 const SRT_PROFILE_DIR_NAME = "srt";
 const DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
+/** Plan-mode srt launcher (plain ESM, run by the host runtime without Jiti). */
+const SRT_LAUNCHER: SrtLauncher = {
+  nodePath: process.execPath,
+  launcherPath: fileURLToPath(new URL("./srt-launcher.mjs", import.meta.url)),
+};
 type ActivePlanSandbox = PlanModeSandboxState & PlanSandboxSnapshot & { scratchDir: string };
 /** Outcome of creating a workflow sandbox: a verified sandbox or the reason Plan mode cannot use one. */
 interface PlanSandboxCreation {
@@ -892,7 +901,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
         };
       }
       const command = readCommand(event.input);
-      const wrapped = wrapCommandForSrt(command, sandbox.srtPath, sandbox.settingsPath, sandbox.scratchDir);
+      const wrapped = wrapCommandForSrt(command, sandbox, SRT_LAUNCHER);
       if (wrapped === undefined) {
         return {
           block: true,
@@ -1361,6 +1370,9 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       allowWrite: snapshot.allowWrite,
       denyRead: snapshot.denyRead,
       allowedDomains: snapshot.allowedDomains,
+      network: snapshot.network,
+      credentialHardening: snapshot.credentialHardening,
+      agentDir: getAgentDir(),
     });
   }
 
@@ -1370,6 +1382,8 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       writePaths: profile.allowWrite,
       planOutputDir: snapshot.outputDir,
       allowedDomains: profile.allowedDomains,
+      network: profile.network,
+      credentialHardening: profile.credentialHardening,
     };
   }
 
@@ -1385,6 +1399,8 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       allowWrite: persisted.allowWrite,
       denyRead: persisted.denyRead,
       allowedDomains: persisted.allowedDomains,
+      network: persisted.network ?? "allowlist",
+      credentialHardening: persisted.credentialHardening !== false,
     };
   }
 
@@ -1404,29 +1420,38 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       allowWrite: [...(configured.allowWrite ?? [])],
       denyRead: [...(configured.denyRead ?? [])],
       allowedDomains: [...(configured.allowedDomains ?? [])],
+      network: configuredSandboxNetwork(settings),
+      credentialHardening: configuredCredentialHardening(settings),
     };
   }
 
   /**
    * Restored session data never widens the sandbox: frozen allowWrite/allowedDomains must be subsets
-   * of the current settings and the frozen denyRead must cover the current one (defaults included);
-   * otherwise the current settings apply.
+   * of the current settings, the frozen denyRead must cover the current one (defaults included), an
+   * open network needs the current settings to be open too, and released credentials need the
+   * current settings to release them too; otherwise the current settings apply.
    */
   function restorableSandboxExtras(restored: PlanModeSandboxState | undefined) {
     const current = currentSandboxExtras();
     if (!restored?.allowWrite || !restored.denyRead || !restored.allowedDomains) return current;
+    const restoredNetwork = restored.network ?? "allowlist";
+    const restoredHardening = restored.credentialHardening !== false;
     const currentAllowWrite = new Set(current.allowWrite);
     const currentDomains = new Set(current.allowedDomains);
     const restoredDenyRead = new Set([...DEFAULT_SRT_DENY_READ, ...restored.denyRead]);
     const noWider =
       restored.allowWrite.every((path) => currentAllowWrite.has(path)) &&
       restored.allowedDomains.every((domain) => currentDomains.has(domain)) &&
-      [...DEFAULT_SRT_DENY_READ, ...current.denyRead].every((path) => restoredDenyRead.has(path));
+      [...DEFAULT_SRT_DENY_READ, ...current.denyRead].every((path) => restoredDenyRead.has(path)) &&
+      (restoredNetwork === "allowlist" || current.network === "open") &&
+      (restoredHardening || !current.credentialHardening);
     return noWider
       ? {
           allowWrite: [...restored.allowWrite],
           denyRead: [...restored.denyRead],
           allowedDomains: [...restored.allowedDomains],
+          network: restoredNetwork,
+          credentialHardening: restoredHardening,
         }
       : current;
   }
@@ -1455,7 +1480,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     try {
       scratchDir = await createSrtScratchDir();
       await writeSrtProfile(settingsPath, sandboxProfileFor(snapshot, scratchDir));
-      diagnosis = await runSandboxDiagnosis(settingsPath);
+      diagnosis = await runSandboxDiagnosis(settingsPath, snapshot);
     } catch (error: unknown) {
       await removeSandboxFiles({ settingsPath, scratchDir });
       return { error };
@@ -1506,9 +1531,12 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     await removeSandboxFiles(sandbox);
   }
 
-  function runSandboxDiagnosis(settingsPath: string) {
+  function runSandboxDiagnosis(settingsPath: string, policy: Pick<PlanSandboxSnapshot, "network" | "credentialHardening">) {
     const diagnose = dependencies.diagnoseSandbox ?? diagnoseSrtRuntime;
-    return diagnose({ settingsPath });
+    return diagnose({
+      settingsPath,
+      launcher: { ...SRT_LAUNCHER, network: policy.network, credentialHardening: policy.credentialHardening },
+    });
   }
 
   /** Deliver the sandbox setup guide: as an agent turn when interactive, as an error otherwise. */
@@ -1624,7 +1652,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     let diagnosis: SrtRuntimeDiagnosis;
     try {
       await writeSrtProfile(settingsPath, profile).catch(() => undefined);
-      diagnosis = await runSandboxDiagnosis(settingsPath);
+      diagnosis = await runSandboxDiagnosis(settingsPath, profile);
     } finally {
       await removeSrtProfile(settingsPath, srtProfileDir());
     }
@@ -1632,7 +1660,12 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       describeSrtDiagnosis(diagnosis),
       `Plan output directory: ${outputDir}${existsSync(outputDir) ? "" : " (missing; Plan start creates it)"}`,
       `Sandbox write paths: ${profile.allowWrite.join(", ")} + a private per-workflow scratch TMPDIR`,
-      `Sandbox network domains: ${profile.allowedDomains.length > 0 ? profile.allowedDomains.join(", ") : "none (all denied)"}`,
+      profile.network === "open"
+        ? "Sandbox network: OPEN for anonymous public internet (loopback, local-network, private, and cloud-metadata addresses stay blocked)"
+        : `Sandbox network: allowlist ${profile.allowedDomains.length > 0 ? profile.allowedDomains.join(", ") : "empty (all network denied)"}`,
+      profile.credentialHardening
+        ? "Credential hardening: ON (credential stores unreadable, identity env vars scrubbed, agent sockets blocked)"
+        : "Credential hardening: OFF — user credentials are reachable from sandboxed commands (user risk)",
       ...planScoutDoctorLines(),
     ];
     if (!diagnosis.ok) lines.push("Run /plan start to receive the agent setup guide after fixing the environment.");

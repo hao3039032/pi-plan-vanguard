@@ -5,21 +5,32 @@ export interface PlanModePromptSandboxInfo {
   writePaths: string[];
   /** Directory the agent may draft plan Markdown in. */
   planOutputDir: string;
-  /** Empty means all network access is denied. */
+  /** Allowlist mode only; empty means all network access is denied. */
   allowedDomains: string[];
+  /** `open`: anonymous public internet; `allowlist`: only allowedDomains. Absent means allowlist (older callers). */
+  network?: "open" | "allowlist";
+  /** Absent means hardened. */
+  credentialHardening?: boolean;
 }
 
 export function buildSandboxPromptSection(sandbox: PlanModePromptSandboxInfo) {
+  const hardened = sandbox.credentialHardening !== false;
   const network =
-    sandbox.allowedDomains.length > 0
-      ? `allowed only for these domains: ${sandbox.allowedDomains.join(", ")}`
-      : "denied for every domain";
+    sandbox.network === "open"
+      ? "open for anonymous access to the public internet (package registries, documentation, public repositories and APIs); loopback, local-network, private, and cloud-metadata addresses are blocked"
+      : sandbox.allowedDomains.length > 0
+        ? `allowed only for these domains: ${sandbox.allowedDomains.join(", ")}`
+        : "denied for every domain";
+  const identity = hardened
+    ? "- Identity: the user's credentials are not available in the sandbox (credential stores are unreadable and token variables are removed). Use the network only anonymously: never log in, authenticate, or act as the user, and never change remote state (no pushes, publishes, issue/PR/comment creation, or other mutating requests)."
+    : "- Identity: credential hardening is OFF, so the user's credentials may be reachable. Still never use them: do not log in, authenticate, or act as the user, and never change remote state (no pushes, publishes, issue/PR/comment creation, or other mutating requests).";
   return [
     "## Sandboxed exploration",
     "",
     "- Shell commands run inside the Anthropic Sandbox Runtime (srt), an OS-level sandbox. You may run any command freely: pipes, redirects, subshells, variables, scripts — no command allowlist applies.",
     `- Filesystem: reads are allowed everywhere except denied secret paths; writes are allowed only in: ${sandbox.writePaths.join(", ")}, plus a private scratch directory exported as $TMPDIR (use it instead of /tmp, which is read-only).`,
     `- Network: ${network}.`,
+    identity,
     "- A failure like 'Operation not permitted', 'EPERM', or a proxy block is the sandbox boundary. Do not retry the same operation with different syntax; note the constraint in the plan instead.",
     `- You may draft and iterate the plan as Markdown files in ${sandbox.planOutputDir}/, from the shell or with the write/edit tools (which work only for files inside that directory); the user sees updates in the TUI (/plan show). The decision-ready plan itself must still be submitted with plan_mode_complete.`,
   ].join("\n");

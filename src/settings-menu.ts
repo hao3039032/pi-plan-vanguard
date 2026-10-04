@@ -17,7 +17,9 @@ import {
   configuredPlanExportPath,
   configuredPlanModeToggleShortcut,
   configuredPlanOutputDir,
+  configuredCredentialHardening,
   configuredPlanSandbox,
+  configuredSandboxNetwork,
   IMPLEMENTATION_PLAN_RETENTIONS,
   IMPLEMENTATION_THINKING_LEVELS,
   normalizeKeyId,
@@ -88,7 +90,9 @@ type Action =
   | "open-sandbox-deny-read"
   | "set-sandbox-deny-read"
   | "open-sandbox-domains"
-  | "set-sandbox-domains";
+  | "set-sandbox-domains"
+  | "set-sandbox-network"
+  | "set-credential-hardening";
 
 export async function showPlanModeSettings(
   ctx: ExtensionContext,
@@ -226,11 +230,29 @@ export async function showPlanModeSettings(
                   action: "open-sandbox-deny-read",
                 },
                 {
-                  id: "sandboxDomains",
+                  id: "sandboxNetwork",
                   label: "Sandbox network",
-                  description: "Allowed network domains in the srt sandbox, comma-separated. Empty denies all network.",
+                  description:
+                    "open: anonymous public internet (local and private addresses stay blocked). allowlist: only the domains below; an empty list turns network off.",
+                  currentValue: configuredSandboxNetwork(state.settings),
+                  values: ["open", "allowlist"],
+                  action: "set-sandbox-network",
+                },
+                {
+                  id: "sandboxDomains",
+                  label: "Allowlist domains",
+                  description: "Domains reachable in allowlist mode, comma-separated (ignored while the network is open).",
                   currentValue: sandboxListValue(configuredPlanSandbox(state.settings).allowedDomains),
                   action: "open-sandbox-domains",
+                },
+                {
+                  id: "credentialHardening",
+                  label: "Credential hardening",
+                  description:
+                    "on: credential stores unreadable and token variables removed in the sandbox. off: every credential is reachable from sandboxed commands (user risk).",
+                  currentValue: configuredCredentialHardening(state.settings) ? "on" : "off (user risk)",
+                  values: ["on", "off (user risk)"],
+                  action: "set-credential-hardening",
                 },
               ],
             },
@@ -353,8 +375,8 @@ export async function showPlanModeSettings(
         title: "Sandbox network domains",
         lines: [
           `Configured: ${sandboxListValue(configuredPlanSandbox(state.settings).allowedDomains)}`,
-          "Allowed domains for sandboxed shell commands, comma-separated (wildcards like *.npmjs.org).",
-          "Empty denies all network access inside the sandbox.",
+          "Domains reachable in allowlist mode, comma-separated (wildcards like *.npmjs.org).",
+          "Ignored while Sandbox network is open; in allowlist mode an empty list denies all network access.",
         ],
         placeholder: sandboxListValue(configuredPlanSandbox(state.settings).allowedDomains),
         action: "set-sandbox-domains",
@@ -510,6 +532,28 @@ export async function showPlanModeSettings(
         );
         return result.kind === "stay" ? { kind: "to", screen: "settings" } : result;
       },
+      "set-sandbox-network": async ({ ctx: actionCtx, state, value, signal }) => {
+        if (value !== "open" && value !== "allowlist") return { kind: "rejected" };
+        return savePatch(
+          actionCtx,
+          { planSandbox: { ...configuredPlanSandbox(state.settings), network: value } },
+          signal,
+          value === "open"
+            ? "Sandbox network: open for anonymous public internet. Applies to the next Plan workflow."
+            : "Sandbox network: allowlist only. Applies to the next Plan workflow.",
+        );
+      },
+      "set-credential-hardening": async ({ ctx: actionCtx, state, value, signal }) => {
+        if (value !== "on" && value !== "off (user risk)") return { kind: "rejected" };
+        return savePatch(
+          actionCtx,
+          { planSandbox: { ...configuredPlanSandbox(state.settings), credentialHardening: value === "on" } },
+          signal,
+          value === "on"
+            ? "Credential hardening: on. Applies to the next Plan workflow."
+            : "Credential hardening: OFF. Sandboxed commands can reach your credentials (user risk). Applies to the next Plan workflow.",
+        );
+      },
       "open-sandbox-domains": async () => ({ kind: "to", screen: "sandbox-domains" }),
       "set-sandbox-domains": async ({ ctx: actionCtx, state, value, signal }) => {
         const parsed = parseSandboxList(value);
@@ -522,8 +566,8 @@ export async function showPlanModeSettings(
           },
           signal,
           parsed
-            ? `Sandbox network domains: ${safeTerminalText(parsed.join(", "))}.`
-            : "Sandbox network: all domains denied.",
+            ? `Allowlist domains: ${safeTerminalText(parsed.join(", "))} (used in allowlist mode).`
+            : "Allowlist domains cleared (allowlist mode then denies all network).",
         );
         return result.kind === "stay" ? { kind: "to", screen: "settings" } : result;
       },

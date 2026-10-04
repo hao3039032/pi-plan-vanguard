@@ -5,7 +5,7 @@ import {
   planFromCompletionDetails,
 } from "./completion-tool.js";
 import { type ImplementationModelOverride, isPendingImplementationModelIdentifier } from "./implementation-models.js";
-import { isSrtScratchDir, SRT_PROFILE_FILE_PATTERN } from "./srt-sandbox.js";
+import { isSrtScratchDir, type PlanSandboxNetworkMode, SRT_PROFILE_FILE_PATTERN } from "./srt-sandbox.js";
 import {
   IMPLEMENTATION_PLAN_RETENTIONS,
   type ImplementationPlanRetention,
@@ -39,6 +39,10 @@ export interface PlanSandboxSnapshot {
   allowWrite: string[];
   denyRead: string[];
   allowedDomains: string[];
+  /** Sessions persisted before 0.63.0 restore as `allowlist` (what they effectively were). */
+  network: PlanSandboxNetworkMode;
+  /** Sessions persisted before 0.63.0 restore as hardened. */
+  credentialHardening: boolean;
 }
 
 export interface PlanModeSandboxState extends Partial<PlanSandboxSnapshot> {
@@ -158,9 +162,11 @@ function normalizeSandboxState(value: unknown): PlanModeSandboxState | undefined
   const allowWrite = boundedStringArray(value.allowWrite);
   const denyRead = boundedStringArray(value.denyRead);
   const allowedDomains = boundedStringArray(value.allowedDomains);
+  const network: PlanSandboxNetworkMode = value.network === "open" ? "open" : "allowlist";
+  const credentialHardening = value.credentialHardening !== false;
   const snapshot =
     outputDir && isAbsolute(outputDir) && resolve(outputDir) === outputDir && allowWrite && denyRead && allowedDomains
-      ? { outputDir, allowWrite, denyRead, allowedDomains }
+      ? { outputDir, allowWrite, denyRead, allowedDomains, network, credentialHardening }
       : {};
   return {
     srtPath,

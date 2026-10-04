@@ -1,5 +1,14 @@
 # @hao3039032/pi-plan-vanguard
 
+## 0.63.0 (fork)
+
+### Minor Changes
+
+- **The Plan-mode sandbox network is open by default** for anonymous public-internet access (package registries, documentation, public repositories), following the rule "public network yes, the user's identity no". Plan mode now runs sandboxed commands through `src/srt-launcher.mjs`, which drives srt's library API (`SandboxManager`) — no srt fork: the srt CLI only accepts explicit domain lists, while the library's ask callback approves every hostname. Traffic still crosses srt's proxy inside a separate network namespace, so srt's resolved-address guard keeps loopback, link-local, cloud-metadata, and this host's own addresses blocked, and the profile adds the private and carrier-grade NAT ranges. `planSandbox.network: "allowlist"` restores the previous strict mode (`allowedDomains` only; empty = no network).
+- **Credential hardening is on by default** (`planSandbox.credentialHardening`): an extended list of credential stores is unreadable in the sandbox (gh/git credentials, npm/yarn/pip/cargo/gem/composer auth, Docker/Kubernetes, cloud CLIs, password stores and keyrings, Codex/Claude/Copilot logins, browser profiles, and the Pi agent's `auth.json`/`mcp-auth.json`/`models.json`/`mcp.json`), and identity-bearing environment variables (tokens, API keys, secrets, `SSH_AUTH_SOCK`, `KUBECONFIG`, `XAUTHORITY`, …) are removed before each command. Setting it to `false` releases every built-in credential denial and the env scrub (user risk). Unix sockets stay blocked by srt's seccomp filter in every mode.
+- The Plan contract tells the model whether the network is open and that it must never authenticate as the user or change remote state; `/plan doctor` reports the network mode and hardening; Settings gains **Sandbox network** (open/allowlist) and **Credential hardening** rows, and the domain list becomes **Allowlist domains**. npm's cache is redirected to the private scratch directory so `npm view`/`npm pack` work in the read-only home.
+- Resumed workflows keep their frozen network mode and hardening only when they are no wider than the current settings; sessions persisted before 0.63.0 restore as allowlist + hardened.
+
 ## 0.62.2 (fork)
 
 ### Patch Changes
