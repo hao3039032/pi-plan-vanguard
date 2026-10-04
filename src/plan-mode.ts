@@ -873,7 +873,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     ) {
       const guidance =
         event.toolName === "subagent"
-          ? " Read-only delegation is auto-admitted for plan-scout and verified read-only agents (single-child or static batches without host-side parameters); add trusted agents to planAdmittedAgents; script workflows require planAdmitWorkflowScripts."
+          ? " Read-only delegation is auto-admitted for plan-scout and verified read-only agents (single-child calls without host-side parameters; issue several in one turn for parallel recon); add trusted agents to planAdmittedAgents; script workflows require planAdmitWorkflowScripts."
           : "";
       return {
         block: true,

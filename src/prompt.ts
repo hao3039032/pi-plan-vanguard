@@ -33,7 +33,7 @@ export interface PlanModeDelegationInfo {
 export function buildPlanModePrompt(sandbox?: PlanModePromptSandboxInfo, delegation?: PlanModeDelegationInfo) {
   const sandboxSection = sandbox ? `${buildSandboxPromptSection(sandbox)}\n\n` : "";
   const delegationLine = delegation?.scoutRegistered
-    ? "\n- For broad or parallel exploration, delegate read-only recon to the `plan-scout` subagent (single child or static `tasks`/`chain` batches) without host-side options such as gate, acceptance, share, worktree, cwd, or output paths."
+    ? "\n- For broad or parallel exploration, delegate read-only recon to the `plan-scout` subagent: one `subagent` call per child with only `agent` and `task` (issue several such calls in the same turn to run them in parallel), without host-side options such as gate, acceptance, share, worktree, cwd, output paths, or workflow scripts. Subagent results arrive automatically when they finish; do not wait for or poll them (bg_wait and subagent status or other management actions are blocked in Plan mode)."
     : "";
   return `${PLAN_CONTEXT_MARKER}
 # Plan Mode (Conversational)

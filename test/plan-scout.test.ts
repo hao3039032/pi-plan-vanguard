@@ -661,7 +661,9 @@ test("degraded mode admits only the scout and forced-list agents", async () => {
 test("the plan prompt gains the delegation line only while the scout is registered", () => {
   const withScout = buildPlanModePrompt(undefined, { scoutRegistered: true });
   assert.match(withScout, /delegate read-only recon to the `plan-scout` subagent/u);
-  assert.match(withScout, /single child or static `tasks`\/`chain` batches/u);
+  assert.match(withScout, /one `subagent` call per child with only `agent` and `task`/u);
+  assert.match(withScout, /several such calls in the same turn/u);
+  assert.match(withScout, /do not wait for or poll them/u);
   assert.match(withScout, /without host-side options/u);
   const withoutScout = buildPlanModePrompt(undefined, { scoutRegistered: false });
   assert.ok(!withoutScout.includes("plan-scout"));

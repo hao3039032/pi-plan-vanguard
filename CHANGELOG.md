@@ -1,5 +1,12 @@
 # @hao3039032/pi-plan-vanguard
 
+## 0.62.2 (fork)
+
+### Patch Changes
+
+- The Plan-prompt delegation line now asks for one `subagent` call per child with only `agent` and `task`, issuing several in the same turn for parallel recon. pi-subagents exposes top-level `tasks`/`chain` only when its `disabledFeatures` includes `workflow-scripts`, so the previous "static `tasks`/`chain` batches" advice led models to improvise blocked shapes (for example `args: {tasks}`) under the default configuration. Docs and the block-reason guidance match.
+- The prompt tells the model that subagent results arrive automatically and not to wait for or poll them, since `bg_wait` and run-management actions (`status`, ...) stay blocked in Plan mode.
+
 ## 0.62.1 (fork)
 
 ### Patch Changes
