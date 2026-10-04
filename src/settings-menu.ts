@@ -263,7 +263,7 @@ export async function showPlanModeSettings(
           "Comma-separated agent names admitted for Plan-mode subagent delegation (plan-scout needs no entry).",
           "Admitting an agent trusts its definition (tools, runners, extensions); submit an empty value to clear the list.",
         ],
-        placeholder: state.settings.planAdmittedAgents?.join(", ") ?? "plan-scout, reviewer",
+        placeholder: state.settings.planAdmittedAgents?.join(", ") ?? "researcher, reviewer",
         action: "set-delegation-agents",
         hint: "back",
       }),

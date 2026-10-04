@@ -8,7 +8,10 @@ import {
   clearReadOnlyAgentVerificationCache,
   createPlanScoutManager,
   decideDelegationAdmission,
+  loadSubagentPreflight,
+  planScoutDefinitionFileIsAdmitted,
   type PreflightResolver,
+  resetSubagentPreflightCache,
   type SubagentPreflightResult,
   parentReadOnlyToolNames,
   readOnlyToolUniverse,
@@ -62,6 +65,7 @@ const missingAgent: SubagentPreflightResult = {
 
 beforeEach(() => {
   clearReadOnlyAgentVerificationCache();
+  resetSubagentPreflightCache();
 });
 
 test("plan-scout registers through the runtime agent event and stays idempotent", async () => {
@@ -156,18 +160,32 @@ test("without preflight the manager still registers and reports the degraded mod
 // Call classification and parameter whitelist
 // ---------------------------------------------------------------------------
 
-test("capabilities listings are admitted and other management actions are not", () => {
-  assert.deepEqual(classifySubagentCall({ action: "capabilities" }), {
+test("agent listings are admitted and other management actions are not", () => {
+  assert.deepEqual(classifySubagentCall({ action: "list" }), { ok: true, shape: { kind: "list" } });
+  assert.deepEqual(classifySubagentCall({ action: "list", capabilities: true }), {
     ok: true,
-    shape: { kind: "capabilities" },
+    shape: { kind: "list" },
   });
-  assert.deepEqual(classifySubagentCall({ action: "capabilities", capabilities: true }), {
+  assert.deepEqual(classifySubagentCall({ action: "list", capabilities: true, agentScope: "both" }), {
     ok: true,
-    shape: { kind: "capabilities" },
+    shape: { kind: "list" },
   });
-  const denied = classifySubagentCall({ action: "status", id: "abc" });
-  assert.equal(denied.ok, false);
-  if (!denied.ok) assert.equal(denied.rejection, "action");
+  assert.deepEqual(classifySubagentCall({ action: "list", agentScope: "project" }), {
+    ok: true,
+    shape: { kind: "list" },
+  });
+  const denied: unknown[] = [
+    { action: "capabilities" },
+    { action: "list", id: "x" },
+    { action: "get", agent: "x" },
+    { action: "list", capabilities: "true" },
+    { action: "list", agentScope: "global" },
+  ];
+  for (const input of denied) {
+    const verdict = classifySubagentCall(input);
+    assert.equal(verdict.ok, false, JSON.stringify(input));
+    if (!verdict.ok) assert.equal(verdict.rejection, "action", JSON.stringify(input));
+  }
 });
 
 test("workflow scripts classify separately from static delegation", () => {
@@ -359,6 +377,7 @@ function contract(options: {
   extensions?: string[];
   toolExtensions?: string[];
   filePath?: string;
+  outputPath?: string;
 }): SubagentPreflightResult {
   return {
     ok: true,
@@ -370,6 +389,7 @@ function contract(options: {
         toolExtensionPaths: options.toolExtensions ?? [],
         configuredExtensions: options.extensions ?? [],
       },
+      ...(options.outputPath !== undefined ? { roots: { outputPath: options.outputPath } } : {}),
     },
   };
 }
@@ -385,7 +405,9 @@ test("verified read-only admission accepts explicit read-only allowlists", async
     resolveContract: preflight(contract({})) as PreflightResolver,
     readAgentFile: async (path: string) => files.get(path),
   };
+  clearReadOnlyAgentVerificationCache();
   assert.equal(await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, deps), true);
+  clearReadOnlyAgentVerificationCache();
   assert.equal(
     await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, {
       resolveContract: preflight(contract({ allowlist: ["read", "contact_supervisor"] })),
@@ -394,6 +416,7 @@ test("verified read-only admission accepts explicit read-only allowlists", async
     true,
     "coordination tools are allowed",
   );
+  clearReadOnlyAgentVerificationCache();
   assert.equal(
     await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, {
       resolveContract: preflight(contract({ allowlist: ["read", "mcp__search__query"] })),
@@ -408,6 +431,7 @@ test("verified read-only admission rejects unsafe tool surfaces", async () => {
   const files = new Map<string, string>([["/agents/probe.md", frontmatterAgent("name: probe\ndescription: d\ntools: [read]")]]);
   const readAgentFile = async (path: string) => files.get(path);
   for (const allowlist of [["read", "bash"], ["read", "write"], ["read", "subagent"], ["read", "subagent_command"], ["read", "totally_unknown"]]) {
+    clearReadOnlyAgentVerificationCache();
     assert.equal(
       await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, {
         resolveContract: preflight(contract({ allowlist })),
@@ -417,6 +441,7 @@ test("verified read-only admission rejects unsafe tool surfaces", async () => {
       JSON.stringify(allowlist),
     );
   }
+  clearReadOnlyAgentVerificationCache();
   assert.equal(
     await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, {
       resolveContract: preflight(contract({ explicit: false, allowlist: [] })),
@@ -425,6 +450,7 @@ test("verified read-only admission rejects unsafe tool surfaces", async () => {
     false,
     "implicit allowlists (no tools field, external runners) are rejected",
   );
+  clearReadOnlyAgentVerificationCache();
   assert.equal(
     await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, {
       resolveContract: preflight(contract({ extensions: ["/ext/tool.ts"] })),
@@ -433,6 +459,7 @@ test("verified read-only admission rejects unsafe tool surfaces", async () => {
     false,
     "configured child extensions are rejected",
   );
+  clearReadOnlyAgentVerificationCache();
   assert.equal(
     await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, {
       resolveContract: preflight(contract({ toolExtensions: ["@scope/ext"] })),
@@ -441,6 +468,7 @@ test("verified read-only admission rejects unsafe tool surfaces", async () => {
     false,
     "tool extension paths are rejected",
   );
+  clearReadOnlyAgentVerificationCache();
   assert.equal(
     await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, {
       resolveContract: preflight({ ok: false, code: "missing_agent", message: "unknown" }),
@@ -449,6 +477,7 @@ test("verified read-only admission rejects unsafe tool surfaces", async () => {
     false,
     "missing agents are rejected",
   );
+  clearReadOnlyAgentVerificationCache();
   assert.equal(
     await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, {
       resolveContract: preflight(contract({ filePath: "runtime:probe" })),
@@ -471,8 +500,12 @@ test("definition file guards reject host execution directives and output escapes
     "name: probe\noutput: /tmp/out.md",
     "name: probe\noutput: ../../escape.md",
     "name: probe\noutput: reports/../escape.md",
+    "name: probe\noutput:",
+    "name: probe\noutput: >",
+    "name: probe\noutput: |",
   ]) {
     const files = new Map<string, string>([["/agents/probe.md", frontmatterAgent(frontmatter)]]);
+    clearReadOnlyAgentVerificationCache();
     assert.equal(
       await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, {
         resolveContract: preflight(contract({})),
@@ -482,6 +515,7 @@ test("definition file guards reject host execution directives and output escapes
       frontmatter,
     );
   }
+  clearReadOnlyAgentVerificationCache();
   assert.equal(
     await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, {
       resolveContract: preflight(contract({})),
@@ -502,6 +536,83 @@ test("definition file guards reject host execution directives and output escapes
     }),
     true,
   );
+});
+
+test("verified admission passes the parent model to preflight and caches per provider/id", async () => {
+  const files = new Map<string, string>([["/agents/probe.md", frontmatterAgent("name: probe\ndescription: d\ntools: [read]")]]);
+  const seen: unknown[] = [];
+  let calls = 0;
+  const deps = {
+    resolveContract: (async (input) => {
+      calls += 1;
+      seen.push(input);
+      return contract({});
+    }) as PreflightResolver,
+    readAgentFile: async (path: string) => files.get(path),
+  };
+  const anthropic = { provider: "anthropic", id: "claude-sonnet-4-5" };
+  const openai = { provider: "openai", id: "gpt-5.1" };
+  clearReadOnlyAgentVerificationCache();
+  assert.equal(await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, deps, anthropic), true);
+  assert.equal(
+    await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, deps, anthropic),
+    true,
+    "the same provider/id reuses the cache entry",
+  );
+  assert.equal(calls, 1);
+  assert.deepEqual(seen[0], { agent: "probe", cwd: "/repo", parentModel: anthropic });
+  assert.equal(
+    await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, deps, openai),
+    true,
+    "a different provider is verified separately",
+  );
+  assert.equal(calls, 2);
+  assert.deepEqual(seen[1], { agent: "probe", cwd: "/repo", parentModel: openai });
+  clearReadOnlyAgentVerificationCache();
+  assert.equal(await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, deps), true);
+  assert.deepEqual(seen[2], { agent: "probe", cwd: "/repo" }, "no parent model is forwarded when none is given");
+  clearReadOnlyAgentVerificationCache();
+});
+
+test("verified admission rejects agents that resolve a default output path", async () => {
+  const files = new Map<string, string>([["/agents/probe.md", frontmatterAgent("name: probe\ndescription: d\ntools: [read]")]]);
+  const readAgentFile = async (path: string) => files.get(path);
+  clearReadOnlyAgentVerificationCache();
+  assert.equal(
+    await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, {
+      resolveContract: preflight(contract({ outputPath: "reports/summary.md" })),
+      readAgentFile,
+    }),
+    false,
+    "a relative default output path lands in the working tree and denies admission",
+  );
+  clearReadOnlyAgentVerificationCache();
+  assert.equal(
+    await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, {
+      resolveContract: preflight(contract({ outputPath: "  " })),
+      readAgentFile,
+    }),
+    true,
+    "a whitespace-only output path is not a resolved write",
+  );
+  clearReadOnlyAgentVerificationCache();
+  assert.equal(
+    await verifyReadOnlyAgent("probe", "/repo", readOnlyTools, {
+      resolveContract: preflight(contract({})),
+      readAgentFile,
+    }),
+    true,
+    "no roots.outputPath means no default output write",
+  );
+});
+
+test("definition file guards reject empty and block-scalar output values directly", () => {
+  assert.equal(planScoutDefinitionFileIsAdmitted(frontmatterAgent("name: probe\noutput:")), false);
+  assert.equal(planScoutDefinitionFileIsAdmitted(frontmatterAgent("name: probe\noutput: >")), false);
+  assert.equal(planScoutDefinitionFileIsAdmitted(frontmatterAgent("name: probe\noutput: |")), false);
+  assert.equal(planScoutDefinitionFileIsAdmitted(frontmatterAgent("name: probe\noutput: |-2")), false);
+  assert.equal(planScoutDefinitionFileIsAdmitted(frontmatterAgent("name: probe\noutput: reports/summary.md")), true);
+  assert.equal(planScoutDefinitionFileIsAdmitted(frontmatterAgent("name: probe\ndescription: d")), true);
 });
 
 test("verification results are cached per agent and cwd until cleared", async () => {
@@ -550,6 +661,7 @@ test("degraded mode admits only the scout and forced-list agents", async () => {
 test("the plan prompt gains the delegation line only while the scout is registered", () => {
   const withScout = buildPlanModePrompt(undefined, { scoutRegistered: true });
   assert.match(withScout, /delegate read-only recon to the `plan-scout` subagent/u);
+  assert.match(withScout, /single child or static `tasks`\/`chain` batches/u);
   assert.match(withScout, /without host-side options/u);
   const withoutScout = buildPlanModePrompt(undefined, { scoutRegistered: false });
   assert.ok(!withoutScout.includes("plan-scout"));
@@ -613,4 +725,57 @@ test("the read-only universe includes coordination tools and parent-hinted tools
   assert.ok(!universe.has("web_enable"));
   assert.ok(!universe.has("web_fetch"), "destructive-hinted tools are excluded");
   assert.ok(!universe.has("bash"));
+});
+
+// ---------------------------------------------------------------------------
+// Preflight loading (two-tier import)
+// ---------------------------------------------------------------------------
+
+test("loadSubagentPreflight falls back from the bare export to the agent-dir file URL", async () => {
+  resetSubagentPreflightCache();
+  const module = { resolveSubagentLaunchContract: async () => missingAgent };
+  const requested: string[] = [];
+  const loaded = await loadSubagentPreflight(async (id: string) => {
+    requested.push(id);
+    if (id === "pi-subagents/preflight") throw new Error("no such export");
+    return module;
+  });
+  assert.equal(loaded, module);
+  assert.equal(requested.length, 2);
+  assert.equal(requested[0], "pi-subagents/preflight");
+  assert.match(requested[1] ?? "", /^file:\/\/\//u, "tier 2 imports through a file:// URL");
+  assert.match(requested[1] ?? "", /npm\/node_modules\/pi-subagents\/src\/api\/preflight\.js$/u);
+  resetSubagentPreflightCache();
+});
+
+test("loadSubagentPreflight returns undefined when both tiers fail", async () => {
+  resetSubagentPreflightCache();
+  const requested: string[] = [];
+  const loaded = await loadSubagentPreflight(async (id: string) => {
+    requested.push(id);
+    throw new Error("unavailable");
+  });
+  assert.equal(loaded, undefined);
+  assert.equal(requested.length, 2, "both tiers were attempted");
+  resetSubagentPreflightCache();
+});
+
+test("a module without resolveSubagentLaunchContract is treated as unavailable", async () => {
+  resetSubagentPreflightCache();
+  const loaded = await loadSubagentPreflight(async () => ({ other: true }));
+  assert.equal(loaded, undefined);
+  resetSubagentPreflightCache();
+});
+
+test("the tier 1 bare export is used without the file URL fallback", async () => {
+  resetSubagentPreflightCache();
+  const module = { resolveSubagentLaunchContract: async () => missingAgent };
+  const requested: string[] = [];
+  const loaded = await loadSubagentPreflight(async (id: string) => {
+    requested.push(id);
+    return module;
+  });
+  assert.equal(loaded, module);
+  assert.deepEqual(requested, ["pi-subagents/preflight"]);
+  resetSubagentPreflightCache();
 });

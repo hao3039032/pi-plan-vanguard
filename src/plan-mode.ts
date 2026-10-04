@@ -109,6 +109,7 @@ import {
   type PreflightResolver,
   readOnlyToolUniverse,
   readAgentDefinitionFile,
+  type SubagentParentModel,
   verifyReadOnlyAgent,
 } from "./plan-scout.js";
 import {
@@ -302,14 +303,25 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 
   // Per-agent verdict for delegation admission: plan-scout (registration) and planAdmittedAgents
   // are decided by the caller; every other agent must verify read-only through the pi-subagents
-  // preflight contract plus definition-file guards.
-  const admitDelegatedAgent = async (agent: string, cwd: string): Promise<boolean> => {
+  // preflight contract plus definition-file guards. The session model's provider/id goes along so
+  // provider-scoped agent settings overrides apply exactly as they do at execution.
+  const admitDelegatedAgent = async (
+    agent: string,
+    cwd: string,
+    parentModel?: SubagentParentModel,
+  ): Promise<boolean> => {
     const resolver = await getSubagentPreflightResolver();
     if (!resolver) return false;
-    return verifyReadOnlyAgent(agent, cwd, readOnlyToolUniverse(parentReadOnlyToolNames(safeGetAllTools())), {
-      resolveContract: resolver,
-      readAgentFile: readAgentDefinitionFile,
-    });
+    return verifyReadOnlyAgent(
+      agent,
+      cwd,
+      readOnlyToolUniverse(parentReadOnlyToolNames(safeGetAllTools())),
+      {
+        resolveContract: resolver,
+        readAgentFile: readAgentDefinitionFile,
+      },
+      parentModel,
+    );
   };
   const implementationRetention = createImplementationRetentionCoordinator();
   const finalizationRequest = createFinalizationRequestCoordinator();
@@ -578,13 +590,21 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
   const startPlanModeSettingsWatch = (generation: number) => {
     stopPlanModeSettingsWatch();
     if (dependencies.readSettings) return;
+    // Without an explicit settings path the effective file may still be a legacy name after the
+    // 0.62.0 rename, so live reload reacts to the canonical and the legacy basenames alike (they
+    // all live in the same agent dir).
+    const watchedNames = explicitPlanModeSettingsPath
+      ? new Set([basename(explicitPlanModeSettingsPath)])
+      : new Set([
+          basename(planModeSettingsPath()),
+          ...legacyPlanModeSettingsPaths().map((path) => basename(path)),
+        ]);
     const pathToWatch = explicitPlanModeSettingsPath ?? planModeSettingsPath();
     try {
       const directory = dirname(pathToWatch);
-      const fileName = basename(pathToWatch);
       const watcher = watch(directory, { persistent: false }, (event, changedFile) => {
         if (event !== "rename" && event !== "change") return;
-        if (!changedFile || changedFile.toString() !== fileName) return;
+        if (!changedFile || !watchedNames.has(changedFile.toString())) return;
         schedulePlanModeSettingsReload(generation);
       });
       watcher.on("error", () => {
@@ -826,8 +846,8 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       };
     }
     // Read-only delegation through pi-subagents is admitted per call (never persisted into the
-    // workflow allowlist): capabilities listings, plan-scout, planAdmittedAgents, and verified
-    // read-only agents without host-side call parameters.
+    // workflow allowlist): `action: "list"` agent listings, plan-scout, planAdmittedAgents, and
+    // verified read-only agents without host-side call parameters.
     if (event.toolName === "subagent") {
       const admission = await decideDelegationAdmission(event.input, {
         settings: {
@@ -835,7 +855,12 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
           planAdmitWorkflowScripts: configuredPlanAdmitWorkflowScripts(settings),
         },
         scoutRegistered: planScout.status().status === "registered",
-        admitAgent: (agent) => admitDelegatedAgent(agent, ctx.cwd ?? process.cwd()),
+        admitAgent: (agent) =>
+          admitDelegatedAgent(
+            agent,
+            ctx.cwd ?? process.cwd(),
+            ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined,
+          ),
       });
       if (admission.admit) {
         trackPlanCall(event.toolCallId);
@@ -1103,10 +1128,9 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       };
       beginWorkflowToolPolicy();
       applyPlanThinkingLevel();
-      // Each new Plan workflow re-checks the plan-scout registration (retry after failures,
-      // dispose on a newly configured name collision) and starts with fresh agent verdicts.
+      // Each new Plan workflow starts with fresh agent verdicts; plan-scout itself was re-checked
+      // by the awaiting start path (and session_start) before the contract was published.
       clearReadOnlyAgentVerificationCache();
-      void planScout.ensure();
       persistState();
       updateUi(ctx);
       // The workflow started from this session's live state; a first prompt after /new must not
@@ -1170,6 +1194,9 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       workflowGeneration === startWorkflowGeneration &&
       !state.enabled;
     await discardActiveSandbox();
+    // The Plan contract published on activation must already reflect the plan-scout registration
+    // state, so await it here; the isCurrent() check below still rejects a session that moved on.
+    await planScout.ensure();
     const result = await createVerifiedSandbox(ctx);
     if (!isCurrent()) {
       await removeSandboxFiles(result.sandbox);
@@ -1625,7 +1652,9 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
             : "Delegation: plan-scout not registered yet (starts with the next session or Plan workflow)";
     const verificationLine = status.preflightAvailable
       ? "Delegation verification: verified via pi-subagents preflight"
-      : "Delegation verification: degraded — plan-scout and planAdmittedAgents only (pi-subagents preflight unavailable; install or update npm:pi-subagents)";
+      : status.status === "registered"
+        ? "Delegation verification: degraded — plan-scout and planAdmittedAgents only (pi-subagents preflight unavailable; install or update npm:pi-subagents)"
+        : "Delegation verification: degraded — planAdmittedAgents only (pi-subagents preflight unavailable; install or update npm:pi-subagents)";
     const scriptsLine = configuredPlanAdmitWorkflowScripts(settings)
       ? "Delegation workflow scripts: ADMITTED (planAdmitWorkflowScripts on — script workflows run with full trust)"
       : "Delegation workflow scripts: blocked (planAdmitWorkflowScripts off)";

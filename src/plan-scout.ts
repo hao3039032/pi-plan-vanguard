@@ -56,17 +56,33 @@ export interface SubagentLaunchContractTools {
 export interface SubagentLaunchContract {
   agent: { name: string; source: string; filePath: string };
   tools: SubagentLaunchContractTools;
+  /** Launch roots; `outputPath` is set when the agent default or a settings override resolves one. */
+  roots?: { outputPath?: string };
 }
 
 export type SubagentPreflightResult =
   | { ok: true; contract: SubagentLaunchContract }
   | { ok: false; code: string; message: string };
 
-export interface SubagentPreflight {
-  resolveSubagentLaunchContract(input: { agent: string; cwd: string }): Promise<unknown>;
+/** Minimal shape of the parent session model (`ctx.model`) used for provider-scoped settings parity. */
+export interface SubagentParentModel {
+  provider: string;
+  id: string;
 }
 
-export type PreflightResolver = (input: { agent: string; cwd: string }) => Promise<SubagentPreflightResult>;
+export interface SubagentPreflight {
+  resolveSubagentLaunchContract(input: {
+    agent: string;
+    cwd: string;
+    parentModel?: SubagentParentModel;
+  }): Promise<unknown>;
+}
+
+export type PreflightResolver = (input: {
+  agent: string;
+  cwd: string;
+  parentModel?: SubagentParentModel;
+}) => Promise<SubagentPreflightResult>;
 
 let cachedPreflight: SubagentPreflight | undefined | null = null;
 
@@ -290,7 +306,7 @@ export type DelegationRejection =
   | "empty";
 
 export type SubagentCallShape =
-  | { kind: "capabilities" }
+  | { kind: "list" }
   | { kind: "workflow" }
   | { kind: "delegation"; agents: string[] };
 
@@ -304,6 +320,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+const MANAGEMENT_LISTING_KEYS = new Set(["action", "capabilities", "agentScope"]);
+const MANAGEMENT_LISTING_SCOPES = new Set(["user", "project", "both"]);
+
+/**
+ * pi-subagents has no `capabilities` action: the read-only agent listing is `action: "list"`,
+ * optionally narrowed by the boolean `capabilities` modifier and an `agentScope` (handleList in
+ * agent-management.js). Anything else is a management action with host-side effects.
+ */
+function isAgentListingAction(input: Record<string, unknown>, keys: string[]) {
+  if (input.action !== "list") return false;
+  if (!keys.every((key) => MANAGEMENT_LISTING_KEYS.has(key))) return false;
+  if (input.capabilities !== undefined && typeof input.capabilities !== "boolean") return false;
+  if (input.agentScope !== undefined && !MANAGEMENT_LISTING_SCOPES.has(String(input.agentScope))) return false;
+  return true;
 }
 
 function collectAgentsFromTaskList(value: unknown, agents: string[]): boolean {
@@ -337,7 +369,7 @@ function collectAgentsFromChain(value: unknown, agents: string[]): boolean {
 
 /**
  * Classify a `subagent` tool call for Plan-mode per-call admission:
- * - `action: "capabilities"` with no execution keys is a safe read-only listing;
+ * - `action: "list"` (optionally with `capabilities`/`agentScope`) is a safe read-only listing;
  * - `workflow` scripts are a full trust decision handled by the planAdmitWorkflowScripts setting;
  * - single-child and static `tasks`/`chain` batches pass a strict parameter whitelist and shape
  *   validation, and reduce to the referenced agent names for per-agent admission.
@@ -351,10 +383,15 @@ export function classifySubagentCall(input: unknown): SubagentCallClassification
     return { ok: false, rejection: "host-parameter", detail: "workflow accepts only true for script delegation" };
   }
   if (input.action !== undefined) {
-    if (input.action === "capabilities" && keys.every((key) => key === "action" || key === "capabilities")) {
-      return { ok: true, shape: { kind: "capabilities" } };
-    }
-    return { ok: false, rejection: "action", detail: `management action '${String(input.action)}'` };
+    if (isAgentListingAction(input, keys)) return { ok: true, shape: { kind: "list" } };
+    return {
+      ok: false,
+      rejection: "action",
+      detail:
+        input.action === "list"
+          ? "agent listing accepts only capabilities (boolean) and agentScope (user|project|both)"
+          : `management action '${String(input.action)}'`,
+    };
   }
 
   for (const key of keys) {
@@ -420,7 +457,7 @@ export async function decideDelegationAdmission(
   const classification = classifySubagentCall(input);
   if (!classification.ok) return { admit: false, ...classification };
   const { shape } = classification;
-  if (shape.kind === "capabilities") return { admit: true, shape };
+  if (shape.kind === "list") return { admit: true, shape };
   if (shape.kind === "workflow") {
     if (deps.settings.planAdmitWorkflowScripts === true) return { admit: true, shape };
     return {
@@ -471,19 +508,25 @@ export function clearReadOnlyAgentVerificationCache() {
 
 /**
  * Verified read-only admission: an agent passes only when preflight resolves it, its tool
- * allowlist is explicit and entirely read-only, it configures no child extensions, and its
- * definition file carries no runner/machine/acceptance/extension/output-escape directives.
+ * allowlist is explicit and entirely read-only, it configures no child extensions, resolves no
+ * default output path, and its definition file carries no runner/machine/acceptance/extension/
+ * output-escape directives.
+ *
+ * `parentModel` gives preflight the session's provider/id so provider-scoped agent settings
+ * overrides apply exactly as they do at execution; verdicts cache per provider/id.
  */
 export async function verifyReadOnlyAgent(
   agent: string,
   cwd: string,
   readOnlyTools: ReadonlySet<string>,
   deps: ReadOnlyVerificationDeps,
+  parentModel?: SubagentParentModel,
 ): Promise<boolean> {
-  const cacheKey = `${agent}@${cwd}`;
+  const parentKey = parentModel ? `${parentModel.provider}/${parentModel.id}` : "unscoped";
+  const cacheKey = `${agent}@${cwd}@${parentKey}`;
   const cached = verificationCache.get(cacheKey);
   if (cached !== undefined) return cached;
-  const verdict = await verifyReadOnlyAgentUncached(agent, cwd, readOnlyTools, deps);
+  const verdict = await verifyReadOnlyAgentUncached(agent, cwd, readOnlyTools, deps, parentModel);
   verificationCache.set(cacheKey, verdict);
   return verdict;
 }
@@ -493,8 +536,9 @@ async function verifyReadOnlyAgentUncached(
   cwd: string,
   readOnlyTools: ReadonlySet<string>,
   deps: ReadOnlyVerificationDeps,
+  parentModel?: SubagentParentModel,
 ): Promise<boolean> {
-  const result = await deps.resolveContract({ agent, cwd });
+  const result = await deps.resolveContract({ agent, cwd, ...(parentModel ? { parentModel } : {}) });
   if (!result.ok) return false;
   const { contract } = result;
   if (contract.tools?.explicitAllowlist !== true) return false;
@@ -502,6 +546,10 @@ async function verifyReadOnlyAgentUncached(
   if (!allowlist.every((tool) => readOnlyTools.has(tool))) return false;
   if ((contract.tools.configuredExtensions ?? []).length > 0) return false;
   if ((contract.tools.toolExtensionPaths ?? []).length > 0) return false;
+  // Admission preflights carry no per-call output, so a resolved output path is an agent default
+  // or a settings override; with `artifacts: false` a relative default resolves into the repo
+  // working tree (single-output.js), so it denies admission.
+  if (isNonEmptyString(contract.roots?.outputPath)) return false;
   const definition = contract.agent?.filePath;
   if (!definition || !isAbsolute(definition)) return false; // runtime-registered or non-file agents
   const contents = await deps.readAgentFile(definition);
@@ -526,6 +574,9 @@ export function planScoutDefinitionFileIsAdmitted(contents: string): boolean {
     if ((FORBIDDEN_DEFINITION_KEYS as readonly string[]).includes(key)) return false;
     if (key === "output") {
       const value = unquoteYamlScalar(keyMatch[2] ?? "");
+      // Empty and block-scalar values (`>`, `|`) hand the output location to the runner/default,
+      // so they deny admission like an absolute or `..`-escaping path does.
+      if (value === "" || value.startsWith("|") || value.startsWith(">")) return false;
       if (isAbsolute(value) || value.split(/[\\/]/u).includes("..")) return false;
     }
   }

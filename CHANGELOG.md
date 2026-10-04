@@ -1,5 +1,18 @@
 # @hao3039032/pi-plan-vanguard
 
+## 0.62.1 (fork)
+
+### Patch Changes
+
+- Delegation admission now matches the real pi-subagents management API: the read-only agent listing is `action: "list"` (optionally with the boolean `capabilities` modifier and `agentScope: user|project|both`), not the `action: "capabilities"` the 0.61.0 notes named — pi-subagents has no such action, so those calls are now correctly rejected as an unknown management action.
+- Verified read-only admission passes the parent session's model (`provider`/`id`) into the pi-subagents preflight contract, so provider-scoped agent settings overrides (`subagents.agentOverridesByProvider`) apply exactly as they do at execution, and verdicts cache per provider/id.
+- Verified read-only admission rejects agents whose preflight contract resolves a default output path (`roots.outputPath`): admission preflights carry no per-call output, so that path is an agent default or a settings override, and with `artifacts: false` a relative default lands inside the repository working tree. Definition-file guards also reject empty and block-scalar (`>`/`|`) `output` values.
+- Starting a Plan workflow awaits the plan-scout registration before creating the sandbox and publishing the Plan contract, so a `/plan <prompt>` start can no longer freeze the prompt without the delegation line even though registration succeeds immediately after.
+- The Plan-prompt delegation line now says "static `tasks`/`chain` batches" (chain batches were always admitted).
+- Settings live reload reacts to the legacy `pi-plan-mode.json`/`plan-mode.json` filenames again, not just the canonical `pi-plan-vanguard.json`, when no explicit settings path is configured.
+- `/plan doctor` says "planAdmittedAgents only" when plan-scout itself is not registered and the preflight is unavailable; the Settings delegation placeholder no longer suggests an entry for plan-scout (it needs none).
+- README: the Security Delegation bullet no longer reads as if the host-side parameters were the safe ones, and the Install section notes that optional plan-scout delegation needs `pi install npm:pi-subagents`.
+
 ## 0.62.0 (fork)
 
 ### Minor Changes
