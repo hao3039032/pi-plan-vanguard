@@ -10,7 +10,7 @@ import {
   type InputEvent,
   type InputSource,
 } from "@earendil-works/pi-coding-agent";
-import { sanitizeTerminalText } from "@narumitw/pi-tui-kit";
+import { sanitizeTerminalText } from "./terminal-text.js";
 import { completePlanArguments } from "./command.js";
 import {
   normalizePlanModeCompletion,

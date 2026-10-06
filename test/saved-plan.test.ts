@@ -29,7 +29,7 @@ function latestState(entries: readonly { data: unknown }[]) {
     | {
         enabled?: boolean;
         latestPlan?: string;
-        savedPlan?: { plan?: string; source?: string };
+        savedPlan?: { plan?: string; source?: string; docPath?: string };
         activeImplementation?: { plan?: string };
       }
     | undefined;

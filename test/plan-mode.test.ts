@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { link, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, initTheme } from "@earendil-works/pi-coding-agent";
 import { test, vi } from "vitest";
 import { planModeCompleted } from "../src/completion-tool.js";
 import { FINALIZE_PLAN_PROMPT, RETRY_FINALIZE_PLAN_PROMPT } from "../src/finalization-request.js";
@@ -1452,7 +1452,7 @@ test("plan workflows wrap every bash command with the srt sandbox and keep other
   assert.equal(result, undefined);
   assert.match(
     input.command,
-    /^CLAUDE_CODE_TMPDIR='[^']*pi-plan-mode-scratch-[^']*' '\/usr\/local\/bin\/srt' -s '[^']*\/srt\/pi-plan-mode-srt-[^']*\.json' -c '/,
+    /^CLAUDE_CODE_TMPDIR='[^']*pi-plan-mode-scratch-[^']*' '[^']*node[^']*' '[^']*srt-launcher\.mjs' '--srt' '\/usr\/local\/bin\/srt' '--settings' '[^']*\/srt\/pi-plan-mode-srt-[^']*\.json' '--open-network' '--scrub-env' '-c' '/,
   );
   assert.match(input.command, /cat README\.md \| grep '\\''plan'\\'' > \/tmp\/out\.txt'$/);
   assert.equal(input.timeout, 30_000);
@@ -1534,9 +1534,11 @@ test("completed plans persist to the plan output directory and revisions overwri
     await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
     await mock.commands.get("plan")?.handler("start", context.ctx);
 
-    const complete = mock.tools.find((tool) => tool.name === "plan_mode_complete");
+    const complete = mock.tools.find((tool) => tool.name === "plan_mode_complete")?.execute as
+      | ((...args: unknown[]) => Promise<unknown>)
+      | undefined;
     assert.ok(complete);
-    const first = (await complete.execute(
+    const first = (await complete(
       "id-1",
       { plan: "# Ship the sandbox\n\nfirst" },
       undefined,
@@ -1552,7 +1554,7 @@ test("completed plans persist to the plan output directory and revisions overwri
     assert.equal(first.details.plan, "# Ship the sandbox\n\nfirst");
     assert.equal(latestPlanState(mock)?.latestPlan, "# Ship the sandbox\n\nfirst");
 
-    await complete.execute("id-2", { plan: "# Ship the sandbox\n\nrevised" }, undefined, undefined, context.ctx);
+    await complete("id-2", { plan: "# Ship the sandbox\n\nrevised" }, undefined, undefined, context.ctx);
     assert.deepEqual(await readdir(join(directory, "plans")), [files[0]]);
     assert.equal(await readFile(docPath, "utf8"), "# Ship the sandbox\n\nrevised\n");
   } finally {
@@ -1675,10 +1677,10 @@ test("the srt profile lives in the private agent profile dir and write-denies it
     const { mock, context, call } = await startPlanIn(directory, { activeTools: ["read", "bash"] });
     const input = { command: "true" };
     assert.equal(await call("bash", input), undefined);
-    const settingsPath = /-s '([^']+)'/u.exec(input.command)?.[1];
+    const settingsPath = /'--settings' '([^']+)'/u.exec(input.command)?.[1];
     const scratchDir = /^CLAUDE_CODE_TMPDIR='([^']+)'/u.exec(input.command)?.[1];
     assert.ok(settingsPath && scratchDir);
-    const agentDir = process.env.PI_CODING_AGENT_DIR as string;
+    const agentDir = getAgentDir();
     const profileDir = TEST_SRT_PROFILE_DIR;
     assert.equal(dirname(settingsPath), profileDir);
     assert.equal(dirname(scratchDir), tmpdir());
@@ -1812,9 +1814,11 @@ test("the ready-plan menu lists the persisted plan document path", async () => {
     });
     await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
     await mock.commands.get("plan")?.handler("start", context.ctx);
-    const complete = mock.tools.find((tool) => tool.name === "plan_mode_complete");
+    const complete = mock.tools.find((tool) => tool.name === "plan_mode_complete")?.execute as
+      | ((...args: unknown[]) => Promise<unknown>)
+      | undefined;
     assert.ok(complete);
-    await complete.execute("id-1", { plan: "# Ready doc\n\nbody" }, undefined, undefined, context.ctx);
+    await complete("id-1", { plan: "# Ready doc\n\nbody" }, undefined, undefined, context.ctx);
     await mock.events.get("agent_settled")?.[0]?.({}, context.ctx);
     const [file] = await readdir(join(directory, "plans"));
     assert.ok(file);
@@ -1834,7 +1838,8 @@ test("plan doctor reports the sandbox diagnosis", async () => {
   const notification = context.notifications.at(-1)?.message ?? "";
   assert.match(notification, /srt sandbox: OK \(\/usr\/local\/bin\/srt\)/);
   assert.match(notification, /Plan output directory:/);
-  assert.match(notification, /Sandbox network domains: none/);
+  assert.match(notification, /Sandbox network: OPEN for anonymous public internet/);
+  assert.match(notification, /Credential hardening: ON/);
 });
 
 type PlanModeTestDependencies = Parameters<typeof planModeDefault>[1];
@@ -1849,9 +1854,11 @@ function restoredPlanContext(data: Record<string, unknown>, overrides: Record<st
 }
 
 function completeTool(mock: ReturnType<typeof createMockPi>) {
-  const complete = mock.tools.find((tool) => tool.name === "plan_mode_complete");
+  const complete = mock.tools.find((tool) => tool.name === "plan_mode_complete")?.execute as
+    | ((...args: unknown[]) => Promise<unknown>)
+    | undefined;
   assert.ok(complete);
-  return (plan: string, ctx: unknown) => complete.execute("complete", { plan }, undefined, undefined, ctx);
+  return (plan: string, ctx: unknown) => complete("complete", { plan }, undefined, undefined, ctx);
 }
 
 function planStateEntry(mock: ReturnType<typeof createMockPi>) {
@@ -1960,7 +1967,9 @@ test("a symlinked plan output directory makes Plan start fail closed without a s
     planModeDefault(headless.pi, deps);
     const headlessContext = createMockContext({ cwd: repo, hasUI: false });
     await headless.events.get("session_start")?.[0]?.({ reason: "startup" }, headlessContext.ctx);
-    await assert.rejects(headless.commands.get("plan")?.handler("start", headlessContext.ctx), /symlink/u);
+    const headlessPlanHandler = headless.commands.get("plan")?.handler as ((...args: unknown[]) => Promise<unknown>) | undefined;
+    assert.ok(headlessPlanHandler);
+    await assert.rejects(headlessPlanHandler("start", headlessContext.ctx), /symlink/u);
     assert.deepEqual(await readdir(outside), []);
 
     // A restored workflow whose frozen directory became a symlink leaves Plan mode with the reason.

@@ -285,7 +285,7 @@ test("saving a shortcut in Plan Settings preserves registration until reload", a
     assert.ok(command);
     const running = command.handler("settings", f.runner.createCommandContext());
     await f.tui.waitForOpen();
-    for (let index = 0; index < 6; index += 1) f.tui.press("tui.select.down");
+    for (let index = 0; index < 8; index += 1) f.tui.press("tui.select.down");
     f.tui.press("tui.select.confirm");
     await f.tui.waitForPending();
     await f.tui.waitForOpen();

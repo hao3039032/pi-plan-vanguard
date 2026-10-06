@@ -1,5 +1,5 @@
 import type { ToolInfo } from "@earendil-works/pi-coding-agent";
-import { sanitizeTerminalText } from "@narumitw/pi-tui-kit";
+import { sanitizeTerminalText } from "./terminal-text.js";
 import { planModeToolAvailability } from "./tool-availability.js";
 import {
   canSelectToolInPlanMode,

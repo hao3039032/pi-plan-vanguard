@@ -6,7 +6,7 @@ import type { ToolInfo } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
 import { createRpcHarness, createTuiHarness } from "@narumitw/pi-tui-kit/testing";
 import { test } from "vitest";
-import { builtinTool, createMockContext, extensionTool } from "../../../test/support.js";
+import { builtinTool, createMockContext, extensionTool } from "./base-support.js";
 import type { PlanModeSettings } from "../src/settings.js";
 import { showPlanModeSettings } from "../src/settings-menu.js";
 
@@ -102,7 +102,7 @@ test("Fresh runtime defaults save a model and thinking level, then reset the mod
   await withSettingsMenu(async ({ settingsPath, tui, ctx, saved }) => {
     const running = showPlanModeSettings(ctx, menuOptions(settingsPath, saved));
     await tui.waitForOpen();
-    for (let index = 0; index < 3; index += 1) tui.press("tui.select.down");
+    for (let index = 0; index < 5; index += 1) tui.press("tui.select.down");
     tui.press("tui.select.confirm");
     await tui.waitForPending();
     await tui.waitForOpen();
@@ -254,6 +254,8 @@ test("Plan reinjection cycles outcomes and export destination saves, previews, r
     await tui.waitForOpen();
     tui.press("tui.select.down");
     tui.press("tui.select.down");
+    tui.press("tui.select.down");
+    tui.press("tui.select.down");
     tui.press("tui.select.confirm");
     await tui.waitForPending();
     await tui.waitForOpen();
@@ -304,7 +306,7 @@ test("Plan mode shortcut saves and resets with explicit reload guidance", async 
   await withSettingsMenu(async ({ settingsPath, tui, ctx, notifications, saved }) => {
     const running = showPlanModeSettings(ctx, menuOptions(settingsPath, saved));
     await tui.waitForOpen();
-    for (let index = 0; index < 6; index += 1) tui.press("tui.select.down");
+    for (let index = 0; index < 8; index += 1) tui.press("tui.select.down");
     tui.press("tui.select.confirm");
     await tui.waitForPending();
     await tui.waitForOpen();
@@ -357,7 +359,7 @@ test("shortcut input preserves paste, editing, failure, and remapped cancellatio
         }),
       );
       await tui.waitForOpen();
-      for (let index = 0; index < 6; index += 1) tui.press("tui.select.down");
+      for (let index = 0; index < 8; index += 1) tui.press("tui.select.down");
       tui.press("tui.select.confirm");
       await tui.waitForPending();
       await tui.waitForOpen();
@@ -421,7 +423,7 @@ test("long export previews stay within narrow terminal widths", async () => {
     await writeFile(settingsPath, JSON.stringify({ defaultPlanExportPath: longPath }));
     const running = showPlanModeSettings(ctx, menuOptions(settingsPath, saved));
     await tui.waitForOpen();
-    for (let index = 0; index < 5; index += 1) tui.press("tui.select.down");
+    for (let index = 0; index < 7; index += 1) tui.press("tui.select.down");
     tui.press("tui.select.confirm");
     await tui.waitForPending();
     await tui.waitForOpen();
@@ -494,6 +496,8 @@ test("RPC Settings changes retention and export destination with the same flat n
         options: [
           "Plan thinking (inherit)",
           "Plan policy tools (Automatic safe built-ins)",
+          "Delegation agents (plan-scout + verified read-only only)",
+          "Delegation scripts (blocked)",
           "Plan reinjection (Off — conversation history only)",
           "Fresh model (same as plan)",
           "Fresh thinking (same as plan)",
@@ -502,7 +506,9 @@ test("RPC Settings changes retention and export destination with the same flat n
           "Plan output dir (plans)",
           "Sandbox write paths ((defaults))",
           "Sandbox deny-read ((defaults))",
-          "Sandbox network ((defaults))",
+          "Sandbox network (open)",
+          "Allowlist domains ((defaults))",
+          "Credential hardening (on)",
           "Back",
         ],
         response: "Plan reinjection (Off — conversation history only)",
@@ -512,6 +518,8 @@ test("RPC Settings changes retention and export destination with the same flat n
         options: [
           "Plan thinking (inherit)",
           "Plan policy tools (Automatic safe built-ins)",
+          "Delegation agents (plan-scout + verified read-only only)",
+          "Delegation scripts (blocked)",
           "Plan reinjection (Through first implementation run)",
           "Fresh model (same as plan)",
           "Fresh thinking (same as plan)",
@@ -520,7 +528,9 @@ test("RPC Settings changes retention and export destination with the same flat n
           "Plan output dir (plans)",
           "Sandbox write paths ((defaults))",
           "Sandbox deny-read ((defaults))",
-          "Sandbox network ((defaults))",
+          "Sandbox network (open)",
+          "Allowlist domains ((defaults))",
+          "Credential hardening (on)",
           "Back",
         ],
         response: "Export destination (PLAN.md)",
@@ -535,6 +545,8 @@ test("RPC Settings changes retention and export destination with the same flat n
         options: [
           "Plan thinking (inherit)",
           "Plan policy tools (Automatic safe built-ins)",
+          "Delegation agents (plan-scout + verified read-only only)",
+          "Delegation scripts (blocked)",
           "Plan reinjection (Through first implementation run)",
           "Fresh model (same as plan)",
           "Fresh thinking (same as plan)",
@@ -543,7 +555,9 @@ test("RPC Settings changes retention and export destination with the same flat n
           "Plan output dir (plans)",
           "Sandbox write paths ((defaults))",
           "Sandbox deny-read ((defaults))",
-          "Sandbox network ((defaults))",
+          "Sandbox network (open)",
+          "Allowlist domains ((defaults))",
+          "Credential hardening (on)",
           "Back",
         ],
         response: undefined,
@@ -567,6 +581,8 @@ test("Plan settings adapt to RPC cancellation and disposal aborts an in-flight s
       options: [
         "Plan thinking (inherit)",
         "Plan policy tools (Automatic safe built-ins)",
+        "Delegation agents (plan-scout + verified read-only only)",
+        "Delegation scripts (blocked)",
         "Plan reinjection (Off — conversation history only)",
         "Fresh model (same as plan)",
         "Fresh thinking (same as plan)",
@@ -575,7 +591,9 @@ test("Plan settings adapt to RPC cancellation and disposal aborts an in-flight s
         "Plan output dir (plans)",
         "Sandbox write paths ((defaults))",
         "Sandbox deny-read ((defaults))",
-        "Sandbox network ((defaults))",
+        "Sandbox network (open)",
+        "Allowlist domains ((defaults))",
+        "Credential hardening (on)",
         "Back",
       ],
       response: undefined,
@@ -625,6 +643,8 @@ test("Plan output dir and sandbox rows save through the settings menu", async ()
         options: [
           "Plan thinking (inherit)",
           "Plan policy tools (Automatic safe built-ins)",
+          "Delegation agents (plan-scout + verified read-only only)",
+          "Delegation scripts (blocked)",
           "Plan reinjection (Off — conversation history only)",
           "Fresh model (same as plan)",
           "Fresh thinking (same as plan)",
@@ -633,7 +653,9 @@ test("Plan output dir and sandbox rows save through the settings menu", async ()
           "Plan output dir (plans)",
           "Sandbox write paths ((defaults))",
           "Sandbox deny-read ((defaults))",
-          "Sandbox network ((defaults))",
+          "Sandbox network (open)",
+          "Allowlist domains ((defaults))",
+          "Credential hardening (on)",
           "Back",
         ],
         response: "Plan output dir (plans)",
@@ -644,6 +666,8 @@ test("Plan output dir and sandbox rows save through the settings menu", async ()
         options: [
           "Plan thinking (inherit)",
           "Plan policy tools (Automatic safe built-ins)",
+          "Delegation agents (plan-scout + verified read-only only)",
+          "Delegation scripts (blocked)",
           "Plan reinjection (Off — conversation history only)",
           "Fresh model (same as plan)",
           "Fresh thinking (same as plan)",
@@ -652,10 +676,12 @@ test("Plan output dir and sandbox rows save through the settings menu", async ()
           "Plan output dir (specs)",
           "Sandbox write paths ((defaults))",
           "Sandbox deny-read ((defaults))",
-          "Sandbox network ((defaults))",
+          "Sandbox network (open)",
+          "Allowlist domains ((defaults))",
+          "Credential hardening (on)",
           "Back",
         ],
-        response: "Sandbox network ((defaults))",
+        response: "Allowlist domains ((defaults))",
       },
       { kind: "input", placeholder: "(defaults)", response: "api.github.com, *.npmjs.org" },
       {
@@ -663,6 +689,8 @@ test("Plan output dir and sandbox rows save through the settings menu", async ()
         options: [
           "Plan thinking (inherit)",
           "Plan policy tools (Automatic safe built-ins)",
+          "Delegation agents (plan-scout + verified read-only only)",
+          "Delegation scripts (blocked)",
           "Plan reinjection (Off — conversation history only)",
           "Fresh model (same as plan)",
           "Fresh thinking (same as plan)",
@@ -671,7 +699,9 @@ test("Plan output dir and sandbox rows save through the settings menu", async ()
           "Plan output dir (specs)",
           "Sandbox write paths ((defaults))",
           "Sandbox deny-read ((defaults))",
-          "Sandbox network (api.github.com, *.npmjs.org)",
+          "Sandbox network (open)",
+          "Allowlist domains (api.github.com, *.npmjs.org)",
+          "Credential hardening (on)",
           "Back",
         ],
         response: undefined,

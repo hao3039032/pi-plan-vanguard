@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
-import { createMockContext } from "../../../test/support.js";
+import { createMockContext } from "./base-support.js";
 import { createPlanActionController } from "../src/plan-action-controller.js";
 
 test("stale Plan actions do not load interactive UI", async () => {

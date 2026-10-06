@@ -1,5 +1,15 @@
 # @hao3039032/pi-plan-vanguard
 
+## 0.63.1 (fork)
+
+### Patch Changes
+
+- **Verified against Pi 1.0.4** (from 1.0.1): the extension API surface is unchanged for this package (1.0.4 only adds `ToolLoadout.getPromptGuidelines()`), `tsc --noEmit` and the full test suite pass unchanged, and devDependencies move to `@earendil-works/pi-coding-agent`/`pi-tui` 1.0.4.
+- **Restored the test infrastructure lost in the fork extraction.** The fork flattened `packages/pi-plan-mode` to the repository root but left the shared monorepo files behind, so 24 of 35 test files could not even load (`../../../test/support.js`, `../../../scripts/runtime-builder.mjs`) and the runtime build script was broken. Vendored from the fork point (f39946a3, unchanged upstream since): `test/base-support.ts` (mock support), `test/runtime-builder-contract.ts` (standalone-root aware), `scripts/runtime-builder.mjs`, plus the vitest setup (`vitest.config.ts` with `pool: "forks"`, per-test `PI_CODING_AGENT_DIR`, and `vi.restoreAllMocks()` after every test — without it, consecutive shortcut fixtures spy recursively and the settings watcher silently dies).
+- **Fixed the runtime build contract violation from 0.63.0**: `plan-mode.ts` and `tool-selection.ts` imported `sanitizeTerminalText` from `@narumitw/pi-tui-kit`, which the eager entry graph forbids (`forbiddenEagerExternals`). The sanitizer is vendored as `src/terminal-text.ts` (MIT, identical behavior: ESC/CSI/OSC/DCS/PM/APC sequences, Bidi controls, line separators). The build now passes again.
+- **The generated entry now ships `srt-launcher.mjs`**: the 0.63.0 launcher is resolved by file URL relative to the entry, so `dist/` builds could not run the sandbox probe (`Cannot find module '.../dist/srt-launcher.mjs'`). `scripts/build-runtime.mjs` copies the runtime asset next to the published output.
+- **Updated the tests that 0.63.0 changed underneath**: srt command wrapping now goes through `node srt-launcher.mjs --srt … --settings … --open-network --scrub-env`, `/plan doctor` reports the open network and credential hardening, the Settings menu has the Delegation and Sandbox rows (15 rows), and `ExtensionRunner.createToolContext` replaces `createContext` at tool-execute call sites (matches upstream). Also fixes `test/issue-1263-repro` (stale `packages/pi-plan-mode` path) and the srt-profile test (read `getAgentDir()` instead of the unset env var). The real-srt regression's 10 s timeout is covered by raising the vendored timeout-policy cap to 10 s.
+
 ## 0.63.0 (fork)
 
 ### Minor Changes

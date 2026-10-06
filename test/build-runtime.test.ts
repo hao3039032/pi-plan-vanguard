@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { DefaultResourceLoader, ExtensionRunner, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { test } from "vitest";
-import { listFiles, registerRuntimeBuilderContract } from "../../../test/runtime-builder-contract.js";
-import { builtinTool, createMockContext, extensionTool } from "../../../test/support.js";
+import { listFiles, registerRuntimeBuilderContract } from "./runtime-builder-contract.js";
+import { builtinTool, createMockContext, extensionTool } from "./base-support.js";
 
 const { packageRoot, loadBuilder } = registerRuntimeBuilderContract({
   packageId: "pi-plan-mode",
@@ -146,12 +146,13 @@ test("generated runtime is loadable by Pi's Jiti resource loader", async () => {
     await command.handler("start", runner.createCommandContext());
     const complete = runner.getToolDefinition("plan_mode_complete");
     assert.ok(complete);
+    const signal = new AbortController().signal;
     await complete.execute(
       "complete-generated-plan",
       { plan: "# Plan\n\nImplement the generated-runtime fix." },
-      new AbortController().signal,
+      signal,
       undefined,
-      runner.createContext(),
+      runner.createToolContext("complete-generated-plan", signal),
     );
     await runner.emit({ type: "agent_settled" });
     assert.deepEqual(errors, []);

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll } from "vitest";
-import { createMockContext as createBaseMockContext, createMockPi as createBaseMockPi } from "../../../test/support.js";
+import { createMockContext as createBaseMockContext, createMockPi as createBaseMockPi } from "./base-support.js";
 import planModeExtension from "../src/plan-mode.js";
 import type { SrtRuntimeDiagnosis } from "../src/srt-sandbox.js";
 
@@ -11,7 +11,7 @@ export {
   createCustomSelectorHarness,
   driveCustomSelector,
   extensionTool,
-} from "../../../test/support.js";
+} from "./base-support.js";
 
 const PLAN_HELPERS = ["plan_mode_question", "plan_mode_complete"];
 

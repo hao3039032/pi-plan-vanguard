@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DefaultResourceLoader, ExtensionRunner, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { test } from "vitest";
-import { builtinTool, createMockContext, extensionTool } from "../../../test/support.js";
+import { builtinTool, createMockContext, extensionTool } from "./base-support.js";
 
 const EVENT_RECORDER = Symbol.for("pi-plan-mode.issue-1263-events");
 
@@ -46,7 +46,7 @@ export default function laterExtension(pi) {
       cwd: root,
       agentDir,
       settingsManager: SettingsManager.inMemory({}),
-      additionalExtensionPaths: [resolve("packages/pi-plan-mode/src/index.ts"), followerPath],
+      additionalExtensionPaths: [resolve("src/index.ts"), followerPath],
     });
     await loader.reload();
     const loaded = loader.getExtensions();
@@ -169,12 +169,13 @@ export default function laterExtension(pi) {
     await command.handler("start", runner.createCommandContext());
     const complete = runner.getToolDefinition("plan_mode_complete");
     assert.ok(complete);
+    const signal = new AbortController().signal;
     await complete.execute(
       "complete",
       { plan: "# Plan\n\nImplement it." },
-      new AbortController().signal,
+      signal,
       undefined,
-      runner.createContext(),
+      runner.createToolContext("complete", signal),
     );
     await runner.emit({ type: "agent_settled" });
     await handoffFinished.promise;
