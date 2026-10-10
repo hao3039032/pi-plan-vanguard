@@ -1033,7 +1033,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     await acceptCompletedPlan(parsedPlan.plan, "legacy_proposed_plan", ctx);
   });
 
-  pi.on("agent_settled", async (_event, ctx) => {
+  pi.on("agent_settled", async (event, ctx) => {
     const settledImplementationId = implementationRetention.implementationSettled(state.activeImplementation);
     if (settledImplementationId) clearActiveImplementation(settledImplementationId, ctx);
 
@@ -1056,16 +1056,23 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 
     if (finalizationRequest.hasPendingRequest() && state.enabled && workflowMutex.isOwner(workflowOwner)) {
       if (!ctx.isIdle() || ctx.hasPendingMessages()) return;
-      const action = finalizationRequest.settle(workflowGeneration);
-      if (action === "retry") {
-        if (sendPlanModeUserMessage(RETRY_FINALIZE_PLAN_PROMPT, ctx)) return;
+      if (event.aborted) {
+        // The run was cancelled (for example with Escape): never restart finalization on the
+        // user's behalf. Pi 1.1.0 reports `aborted` on agent_settled; on older versions the
+        // field is absent and this guard stays inert.
         finalizationRequest.reset();
-      }
-      if (action === "failed") {
-        ctx.ui.notify(
-          "Plan finalization ended twice without a structured question or completed plan. Plan mode remains active; revise the plan or run /plan finalize again.",
-          "warning",
-        );
+      } else {
+        const action = finalizationRequest.settle(workflowGeneration);
+        if (action === "retry") {
+          if (sendPlanModeUserMessage(RETRY_FINALIZE_PLAN_PROMPT, ctx)) return;
+          finalizationRequest.reset();
+        }
+        if (action === "failed") {
+          ctx.ui.notify(
+            "Plan finalization ended twice without a structured question or completed plan. Plan mode remains active; revise the plan or run /plan finalize again.",
+            "warning",
+          );
+        }
       }
     }
 

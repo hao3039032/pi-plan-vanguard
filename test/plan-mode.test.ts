@@ -829,6 +829,27 @@ test("structured finalization outcomes and cancellation suppress extension retri
   }
 });
 
+test("aborted settlement never restarts finalization, even when the run end looked normal", async () => {
+  const mock = createMockPi({ activeTools: ["read"] });
+  planMode(mock.pi);
+  const context = createMockContext({ mode: "tui", hasUI: true });
+  await mock.commands.get("plan")?.handler("start", context.ctx);
+  await mock.commands.get("plan")?.handler("finalize", context.ctx);
+
+  const agentEnd = mock.events.get("agent_end")?.[0];
+  const agentSettled = mock.events.get("agent_settled")?.[0];
+  assert.ok(agentEnd);
+  assert.ok(agentSettled);
+  // An abort before any assistant message leaves the observed run-end outcome "normal"...
+  await agentEnd({ messages: [] }, context.ctx);
+  // ...but Pi 1.1.0 marks the settlement itself as aborted, which must not restart the agent.
+  await agentSettled({ aborted: true }, context.ctx);
+  assert.equal(mock.sentUserMessages.length, 1); // only the finalize prompt
+  // The pending request was dropped, so a later idle settlement does not retry either.
+  await agentSettled({ aborted: false }, context.ctx);
+  assert.equal(mock.sentUserMessages.length, 1);
+});
+
 test("exact canonical user prompt is tracked for one bounded retry", async () => {
   let pending = true;
   const mock = createMockPi({ activeTools: ["read"] });

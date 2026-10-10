@@ -1,5 +1,12 @@
 # @hao3039032/pi-plan-vanguard
 
+## 0.63.2 (fork)
+
+### Patch Changes
+
+- **Verified against Pi 1.1.0** (from 1.0.4): the extension API surface is purely additive for this package (`ToolRenderContext`/`ToolExecutionEndEvent` gain optional `durationMs`, the render context gains `outputPad`, and `agent_settled` gains `aborted`; the custom `plan_mode_complete` renderer returns a component and does not use `renderShell: "self"`, so Pi applies the new tool-output padding itself). `tsc --noEmit`, the full test suite, and the runtime build pass with devDependencies moved to `@earendil-works/pi-coding-agent`/`pi-tui` 1.1.0; the two `RunnerEmitEvent` fixtures now include `aborted: false` because the event type made the field required.
+- **An aborted settlement never restarts finalization.** `agent_settled` handlers now read Pi 1.1.0's `aborted` flag: when the run was cancelled (for example with Escape), a pending finalization request is dropped instead of auto-sending the retry prompt. This closes the edge case where an abort before any assistant message left the observed run-end outcome "normal" and the extension restarted the agent against the user's intent. On Pi 1.0.x the field is absent and the guard is inert.
+
 ## 0.63.1 (fork)
 
 ### Patch Changes

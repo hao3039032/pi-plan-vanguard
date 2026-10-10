@@ -177,7 +177,7 @@ export default function laterExtension(pi) {
       undefined,
       runner.createToolContext("complete", signal),
     );
-    await runner.emit({ type: "agent_settled" });
+    await runner.emit({ type: "agent_settled", aborted: false });
     await handoffFinished.promise;
     await Promise.resolve();
 
