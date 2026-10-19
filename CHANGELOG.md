@@ -1,5 +1,11 @@
 # @hao3039032/pi-plan-vanguard
 
+## Unreleased
+
+### Patch Changes
+
+- Fix Windows npm shim resolution in the srt launcher: `srt.cmd` is a wrapper, not a symlink to `dist/cli.js`. Resolve the adjacent runtime package for global-prefix and local `.bin` shims, validate its package name and library file, and retain direct CLI / POSIX symlink support. Missing or malformed packages still fail closed, and successful resolution still requires the real sandbox initialization/probe. Add cross-platform filesystem fixtures and a subprocess regression verifying that initialization failures are not bypassed.
+
 ## 0.64.0 (fork)
 
 ### Minor Changes

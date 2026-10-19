@@ -12,7 +12,7 @@
 //   before the sandboxed command inherits the environment.
 // Unix sockets stay blocked by srt's seccomp filter in every mode (ssh-agent, keyrings, docker).
 import { spawn } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -73,12 +73,39 @@ export function parseLauncherArgs(argv) {
   return options;
 }
 
-/** Locate srt's library entry next to the CLI the runtime probe found (`<pkg>/dist/cli.js` -> `dist/index.js`). */
+/**
+ * Locate srt's library entry next to the command found by the runtime probe.
+ *
+ * On POSIX, `srt` is normally a symlink to `<pkg>/dist/cli.js`, so resolving the
+ * command itself is enough. On Windows npm installs a `srt.cmd` shim instead;
+ * resolving that shim does not reveal the target package, but npm places the
+ * package under the same global prefix (`<prefix>/node_modules/...`). Local
+ * npm installs put the shim in `node_modules/.bin` instead. Only inspect these
+ * adjacent layouts; do not execute/parse the shim or fall back to another install.
+ */
 export function resolveSandboxRuntimeLibrary(srtPath, realpath = realpathSync) {
   const cli = realpath(srtPath);
-  if (basename(cli) === "cli.js" && basename(dirname(cli)) === "dist") return join(dirname(cli), "index.js");
+  let packageDir;
+  if (basename(cli) === "cli.js" && basename(dirname(cli)) === "dist") {
+    packageDir = dirname(dirname(cli));
+  } else if (/^srt(?:\.cmd|\.ps1)?$/iu.test(basename(cli))) {
+    const shimDir = dirname(cli);
+    const modulesDir = basename(shimDir) === ".bin" ? dirname(shimDir) : join(shimDir, "node_modules");
+    packageDir = join(modulesDir, "@anthropic-ai", "sandbox-runtime");
+  }
+
+  if (packageDir) {
+    const entry = join(packageDir, "dist", "index.js");
+    try {
+      const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
+      if (manifest.name === "@anthropic-ai/sandbox-runtime" && statSync(entry).isFile()) return entry;
+    } catch {
+      // Missing, unreadable, or malformed installations fail closed below.
+    }
+  }
+
   throw new Error(
-    `cannot locate the @anthropic-ai/sandbox-runtime library next to ${srtPath} (resolved to ${cli}); install srt with npm install -g @anthropic-ai/sandbox-runtime`,
+    `cannot locate the @anthropic-ai/sandbox-runtime library next to ${srtPath} (resolved to ${cli}); expected a valid package.json and dist/index.js in ${packageDir ?? "an adjacent npm package"}. Check this srt installation and PI_PLAN_MODE_SRT_PATH; reinstall @anthropic-ai/sandbox-runtime only if the package is missing or damaged`,
   );
 }
 
