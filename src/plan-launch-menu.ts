@@ -55,7 +55,7 @@ export async function showPlanLaunchMenu(ctx: ExtensionContext, options: PlanLau
           "Policy changes apply only when you start Plan mode; first use may also reveal Plan helpers.",
           options.toolSummary(selectedNames),
           "Available tools can be chosen now; codemode/deferred tools run through other tools without activation, and retained names resolve before the first request.",
-          "Plan mode never activates tools, and non-built-ins run at user risk.",
+          "Plan mode only declares its own two helper tools; the tools chosen here are never activated, and non-built-ins run at user risk.",
         ].map(sanitizeTerminalText),
         enableSearch: true,
         viewportSize: 10,

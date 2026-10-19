@@ -40,6 +40,12 @@ test("plan-mode registers question tools, command, and safety hooks without a CL
     mock.tools.map((tool) => tool.name),
     ["plan_mode_question", "plan_mode_complete"],
   );
+  // Both helpers register inactive so a Normal session never declares their schemas; Plan mode is
+  // the only thing that activates them. Without this flag they are declared on registration, which
+  // is the regression this guards.
+  for (const tool of mock.tools) {
+    assert.equal(tool.defaultActive, false, `${String(tool.name)} must register inactive`);
+  }
   assert.ok(mock.commands.has("plan"));
   assert.equal(typeof mock.commands.get("plan")?.getArgumentCompletions, "function");
   assert.ok(mock.events.has("tool_call"));
@@ -328,6 +334,90 @@ test("session restore fails closed when the tool policy filters out the Plan hel
   };
   await mock.commands.get("plan")?.handler("start", context.ctx);
   assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
+  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "plan_mode_question", "plan_mode_complete"]);
+});
+
+test("Plan start fails closed when the tool policy filters out the Plan helpers", async () => {
+  const mock = createMockPi({ activeTools: ["read"] });
+  // Simulate `--tools`/`--exclude-tools`: the names are silently dropped, so Plan mode's own
+  // activation cannot succeed. Starting must refuse instead of widening the policy.
+  mock.rawPi.getActiveTools = () => ["read"];
+  mock.rawPi.setActiveTools = (names) => {
+    mock.rawPi.getActiveTools = () => names.filter((name) => !name.startsWith("plan_mode_"));
+  };
+  planMode(mock.pi);
+  const context = createMockContext({ hasUI: true });
+  await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+
+  await mock.commands.get("plan")?.handler("start", context.ctx);
+
+  assert.equal(context.statuses.get("plan-mode"), undefined);
+  assert.deepEqual(mock.rawPi.getActiveTools(), ["read"]);
+  assert.match(context.notifications.at(-1)?.message ?? "", /Cannot start Plan mode.*filter.*out/i);
+});
+
+test("a restore that fails mid-commit retracts the helpers it declared", async () => {
+  const restoredState = {
+    type: "custom",
+    customType: "plan-mode-state",
+    data: { enabled: true, awaitingAction: false },
+  };
+  const mock = createMockPi({ activeTools: ["read"] });
+  planMode(mock.pi);
+  const context = createMockContext({
+    hasUI: true,
+    sessionManager: {
+      getBranch: () => [restoredState],
+      getEntries: () => [restoredState],
+    },
+  });
+  // The restore declares the helpers, then throws while committing its state.
+  mock.rawPi.appendEntry = () => {
+    throw new Error("mock restore state failure");
+  };
+
+  await assert.rejects(
+    mock.events.get("session_start")?.[0]?.({ reason: "resume" }, context.ctx) as Promise<unknown>,
+    /mock restore state failure/,
+  );
+
+  assert.deepEqual(mock.rawPi.getActiveTools(), ["read"]);
+});
+
+test("a restore that fails while Plan mode stays active keeps the helpers declared", async () => {
+  const mock = createMockPi({ activeTools: ["read"] });
+  planMode(mock.pi);
+  const context = createMockContext({
+    hasUI: true,
+    sessionManager: { getBranch: () => [], getEntries: () => [] },
+  });
+  await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+  await mock.commands.get("plan")?.handler("start", context.ctx);
+  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "plan_mode_question", "plan_mode_complete"]);
+
+  // A tree navigation re-installs an enabled branch and throws while committing. The rollback
+  // returns to the still-active Plan workflow, so the helpers must stay declared.
+  const enabledState = {
+    type: "custom",
+    customType: "plan-mode-state",
+    data: { enabled: true, awaitingAction: false },
+  };
+  mock.rawPi.appendEntry = () => {
+    throw new Error("mock tree restore failure");
+  };
+  const treeContext = createMockContext({
+    hasUI: true,
+    sessionManager: { getBranch: () => [enabledState], getEntries: () => [enabledState] },
+  });
+
+  let thrown: unknown;
+  try {
+    await mock.events.get("session_tree")?.[0]?.({}, treeContext.ctx);
+  } catch (error: unknown) {
+    thrown = error;
+  }
+
+  assert.match(String(thrown ?? ""), /mock tree restore failure/);
   assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "plan_mode_question", "plan_mode_complete"]);
 });
 

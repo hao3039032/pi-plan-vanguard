@@ -14,7 +14,7 @@ Use a Codex-like `/plan` mode to explore a codebase inside an OS sandbox, resolv
 ## ✨ Features
 
 - Starts and manages Plan mode through `/plan`, `/plan start`, or `/plan <prompt>`; `/plan doctor` diagnoses the sandbox.
-- Runs every `bash` call inside the srt OS sandbox — no command-text allowlist; blocks mutating tools (built-in `write`/`edit` work only for files inside the plan output directory) and PowerShell (v1 is bash-only) while keeping helper schemas stable.
+- Runs every `bash` call inside the srt OS sandbox — no command-text allowlist; blocks mutating tools (built-in `write`/`edit` work only for files inside the plan output directory) and PowerShell (v1 is bash-only) while keeping the helper tool names and definitions stable.
 - Understands Pi 1.0 tool exposure: native MCP and built-in extension tools are auto-admitted when they declare a read-only hint (or explicit opt-in otherwise), and registered codemode/deferred tools may be selected without activation and then run through other tools; every nested call is checked on its own.
 - Ships `plan-scout`, a read-only recon subagent registered through pi-subagents, and auto-admits per-call read-only delegation: single-child calls (several per turn for parallel recon, or static `tasks`/`chain` batches where pi-subagents exposes them) to plan-scout, `planAdmittedAgents`, or agents verified read-only via the pi-subagents preflight contract — without host-side parameters (`gate`, `acceptance`, `share`, `worktree`, `cwd`, output paths, …).
 - Guides the agent through installing srt and its dependencies when the sandbox is unavailable, and stashes the planning prompt for the recovered start.
@@ -206,7 +206,7 @@ Changing only the model keeps the planning thinking level; changing only the thi
 If Pi clamps an unsupported thinking level, the extension reports the effective level.
 If the chosen model disappears or loses authentication after source preflight, the destination reports the race, consumes the intent without retrying it later, and continues with its default model.
 The destination still loads its normal `AGENTS.md`, skills, project resources, and extensions.
-Choosing **Export plan…** asks for a destination, writes the plan, appends the Normal contract, restores inherited thinking, and leaves Plan mode without starting a model turn or changing active tools.
+Choosing **Export plan…** asks for a destination, writes the plan, appends the Normal contract, restores inherited thinking, and leaves Plan mode without starting a model turn; leaving retracts the Plan helper tools.
 Choosing **Save for later**—or running `/plan save`—instead stores one plan in the current Pi session before leaving Plan mode.
 
 When a resumed active Plan workflow completes before `/plan` has run in that resumed session, the automatic menu cannot obtain Pi's command-only session replacement capability; choosing fresh asks you to reopen `/plan`, where the same action is available.
@@ -292,7 +292,7 @@ Manual `/tree` navigation restores branch-owned Plan state and chooses the match
 Pi lists hidden transition messages in `/tree`; Plan mode rejects those internal targets, so select an adjacent conversation entry.
 
 Plan mode registers `plan_mode_question` and `plan_mode_complete` once and keeps their names and definitions stable across Normal, Plan, ready, implementation, and restored workflows.
-Both are registered with `defaultActive: false`, so a Normal session carries no Plan helper schema in its requests; entering Plan mode declares them and leaving Plan mode — `/plan exit`, save, export, or the implementation handoff — retracts them again.
+Both are registered with `defaultActive: false`, so a Normal session carries no Plan helper schema in its requests (unless the tool is named explicitly in `--tools`/`defaultTools`, which Plan exit retracts again); entering Plan mode declares them and leaving Plan mode — `/plan exit`, save, export, or the implementation handoff — retracts them again.
 Only the latest active Plan contract authorizes the helpers; inactive or stale calls fail without accepting a plan or opening question UI.
 Plan mode does not widen a restrictive active-tool policy; start or restore fails when a required helper cannot be activated.
 The tool set therefore changes exactly once per mode transition, next to the contract message and the thinking level that already change there, instead of costing helper schemas on every Normal request.
@@ -393,7 +393,7 @@ This extension maps Codex's `ModeKind::Plan` behavior onto Pi's extension API:
 - `/plan <prompt>` enters Plan mode before submitting the prompt.
 - The agent uses `plan_mode_question` for material preferences and completes with a standalone `plan_mode_complete` call instead of prose detection.
 - The default `clear-on-start` policy uses conversation history; `clear-after-first-run` and `keep` add exact-plan guarantees.
-- Append-only Plan and Normal contracts keep helper schemas stable; unlike Codex, exploration is enforced by an OS sandbox (srt) rather than by command-text policy.
+- Append-only Plan and Normal contracts keep the helper tool names and definitions stable while their declarations follow the active Plan workflow; unlike Codex, exploration is enforced by an OS sandbox (srt) rather than by command-text policy.
 
 ## 🗂️ Package layout
 

@@ -85,6 +85,7 @@ import {
 import {
   assertPlanModeHelperToolsAvailable,
   planModeHelperToolsAvailable,
+  REQUIRED_PLAN_MODE_TOOL_NAMES,
   withRequiredPlanModeTools,
   withoutRequiredPlanModeTools,
 } from "./required-tools.js";
@@ -2190,9 +2191,14 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     const retainedInactiveNames = retainsInactiveSelection ? initialSelectedNames : new Set<string>();
     const registeredNames = new Set(tools.map((tool) => tool.name));
     const pendingNames = Array.from(retainedInactiveNames).filter((name) => !registeredNames.has(name));
-    const helpersRegistered = safeGetAllTools().some(
-      (tool) => tool.name === PLAN_MODE_QUESTION_TOOL_NAME && tool.exposure !== "hidden",
+    // Every helper, not just the question tool: a policy that drops only plan_mode_complete still
+    // fails `/plan start`, so the optimistic status line would be wrong.
+    const registeredToolNames = new Set(
+      safeGetAllTools()
+        .filter((tool) => tool.exposure !== "hidden")
+        .map((tool) => tool.name),
     );
+    const helpersRegistered = REQUIRED_PLAN_MODE_TOOL_NAMES.every((name) => registeredToolNames.has(name));
     await ui.showPlanLaunchMenu(ctx, {
       statusText: helpersRegistered
         ? "Status: Off — Plan helpers stay undeclared until /plan starts."
@@ -2842,6 +2848,9 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
         state = { enabled: false, awaitingAction: false };
         workflowAllowedToolNames = undefined;
         pendingWorkflowToolPolicy = undefined;
+        // The refused restore ends Normal, so a helper set carried in by the previous runtime must
+        // not survive it. This is a no-op when the helpers were never declared.
+        setPlanModeHelperTools(false);
         releasePreviousSandbox();
         // The refused restore never re-probes, so its recorded files would otherwise leak.
         void removeSandboxFiles(candidate.sandbox);
@@ -2851,6 +2860,8 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       workflowOwner = owner;
     }
 
+    // The rollback below restores the pre-restore state, so the helper declarations must match it:
+    // a restored active workflow declares them, anything else must not carry them.
     try {
       if (candidate.enabled) {
         try {
@@ -2894,6 +2905,9 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       releasePreviousSandbox();
       return true;
     } catch (error: unknown) {
+      // The try may have declared or retracted the helpers before throwing, so put them back in
+      // step with the state the next line restores. Plan mode owns their activation either way.
+      setPlanModeHelperTools(previousState.enabled);
       try {
         if (!wasEnabled && state.enabled) restoreThinkingLevel();
       } finally {

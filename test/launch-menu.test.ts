@@ -352,6 +352,31 @@ test("inactive bare /plan adapts the launch menu to RPC", async () => {
   assert.equal(mock.sentUserMessages.length, 0);
 });
 
+test("the launch menu reports an unavailable helper when the tool policy filters one out", async () => {
+  const mock = launchFixture();
+  // A policy that drops only plan_mode_complete still makes `/plan start` fail, so the optimistic
+  // status line would be wrong.
+  mock.rawPi.getActiveTools = () => ["read", "write", "custom"];
+  mock.rawPi.getAllTools = () =>
+    [builtinTool("read"), builtinTool("write"), extensionTool("custom"), extensionTool("plan_mode_question")];
+  const rpc = createRpcHarness([{ kind: "select", response: "How Plan mode works" }]);
+  const context = createMockContext({
+    mode: "rpc",
+    hasUI: true,
+    select: rpc.ui.select,
+    input: rpc.ui.input,
+    custom: rpc.ui.custom,
+  });
+  await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+
+  await mock.commands.get("plan")?.handler("", context.ctx);
+  rpc.assertConsumed();
+  assert.match(
+    rpc.dialogs[0]?.title ?? "",
+    /Status: Off — required Plan helpers are unavailable under the active tool policy\./,
+  );
+});
+
 test("RPC stages tool changes until the explicit start action", async () => {
   const mock = launchFixture();
   const rpc = createRpcHarness([

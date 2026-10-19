@@ -46,7 +46,7 @@ The shortcut is disabled when `toggleShortcut` is omitted.
 
 ### Plan helper tools
 
-`plan_mode_question` and `plan_mode_complete` are registered with `defaultActive: false`, so a Normal session never declares them.
+`plan_mode_question` and `plan_mode_complete` are registered with `defaultActive: false`, so a Normal session never declares them unless the tool is named explicitly in `--tools` or `defaultTools`, which Plan exit retracts again.
 Plan mode owns their activation: `/plan` declares both, and leaving Plan mode — `/plan exit`, save, export, or the implementation handoff — retracts them.
 Each transition writes the active set once, so the request prefix changes at the mode boundary next to the contract message and thinking level, not on every Normal Request.
 Tool visibility alone is not Plan activation.

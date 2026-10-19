@@ -81,7 +81,7 @@ test("internal mode contracts cannot be selected as tree navigation targets", as
   assert.equal(allowed, undefined);
 });
 
-test("manual tree navigation restores branch-owned mode state without changing the tool envelope", async () => {
+test("manual tree navigation restores branch-owned mode state and scopes the helper declarations to it", async () => {
   const branch: unknown[] = [];
   const sessionManager = {
     getBranch: () => branch,

@@ -260,9 +260,9 @@ export async function showPlanModeSettings(
         kind: "multiSelect",
         title: "Default Plan policy allowlist",
         lines: [
-          "Changes apply when a later Plan workflow starts; model-visible tools stay unchanged.",
+          "Changes apply when a later Plan workflow starts; Plan mode only adds its own two helper schemas then.",
           "Retained inactive names resolve before that workflow's first request.",
-          "Plan mode never activates tools, and non-built-ins run at user risk.",
+          "Plan mode only declares its own two helper tools; the tools chosen here are never activated, and non-built-ins run at user risk.",
         ],
         enableSearch: true,
         viewportSize: 10,

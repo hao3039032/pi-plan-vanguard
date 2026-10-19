@@ -56,7 +56,7 @@ In TUI or RPC, **Export plan…** asks for a destination and shows the configure
 Submit an empty value to use the configured destination.
 A failed export retains the TUI draft for correction or reopens the RPC input; Escape returns without writing.
 
-A successful ready-plan export ends Plan mode, restores thinking, and clears the ready state without starting a model turn or changing active tools.
+A successful ready-plan export ends Plan mode, restores thinking, and clears the ready state without starting a model turn; ending Plan mode retracts the Plan helper tools.
 Saved and active implementation exports preserve their existing state.
 Failed or cancelled exports leave Plan state unchanged.
 Export is an explicit user-requested file mutation, and the resulting file can be read with normal tools; model-initiated Plan-mode writes remain blocked.
