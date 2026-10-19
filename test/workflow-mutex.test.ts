@@ -247,8 +247,9 @@ test("busy restored activation does not widen the startup tool envelope", async 
   const context = createMockContext({ mode: "tui", hasUI: true, sessionManager });
 
   await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+  // The refused restore never declares the helpers, so the startup envelope is untouched.
   assert.equal(activeToolWrites, 0);
-  assert.deepEqual(mock.rawPi.getActiveTools(), ["goal_complete", ...PLAN_HELPERS]);
+  assert.deepEqual(mock.rawPi.getActiveTools(), ["goal_complete"]);
   assert.equal(mock.thinkingLevel, "high");
   assert.equal(mock.thinkingLevels.length, 0);
   assert.equal(mock.entries.length, 0);
@@ -288,7 +289,8 @@ test("busy menu, selected-tool, shortcut, and active-implementation starts stay 
     assert.ok(launchOptions);
     await launchOptions.start(new AbortController().signal);
     await launchOptions.startWithTools(["read"], new AbortController().signal);
-    assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write", ...PLAN_HELPERS]);
+    // Both starts are rejected, so neither declares the helpers.
+    assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write"]);
     assert.equal(mock.entries.length, 0);
     assert.equal(context.notifications.length, 2);
   }
@@ -309,7 +311,8 @@ test("busy menu, selected-tool, shortcut, and active-implementation starts stay 
   });
   await shortcutMock.events.get("session_start")?.[0]?.({ reason: "startup" }, shortcutContext.ctx);
   await shortcutMock.shortcuts.get("ctrl+shift+p")?.handler(shortcutContext.ctx);
-  assert.deepEqual(shortcutMock.rawPi.getActiveTools(), ["read", "write", ...PLAN_HELPERS]);
+  // The shortcut is rejected by the busy workflow, so no helpers are declared.
+  assert.deepEqual(shortcutMock.rawPi.getActiveTools(), ["read", "write"]);
   assert.equal(shortcutMock.entries.length, 0);
   assert.match(shortcutContext.notifications.at(-1)?.message ?? "", /Another workflow/u);
 
@@ -347,7 +350,8 @@ test("busy menu, selected-tool, shortcut, and active-implementation starts stay 
   await activeMock.commands.get("plan")?.handler("", activeContext.ctx);
   assert.ok(startNew);
   startNew();
-  assert.deepEqual(activeMock.rawPi.getActiveTools(), ["read", "write", ...PLAN_HELPERS]);
+  // This session is not in Plan mode, so the blocked start declares no helpers.
+  assert.deepEqual(activeMock.rawPi.getActiveTools(), ["read", "write"]);
   assert.equal(activeMock.entries.length, 0);
   assert.deepEqual([...activeContext.statuses], statusSnapshot);
 });
@@ -385,7 +389,12 @@ test("Plan releases only after exit, save, export, implementation handoff, and s
       const released = attempt(sessionManager);
       mock.eventBus.emit(WORKFLOW_MUTEX_CHANNEL, released);
       assert.equal(released.busy, false, `${action} should release after cleanup`);
-      assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write", "plan_mode_question", "plan_mode_complete"]);
+      // Shutdown keeps the workflow active; every other action leaves Plan mode and retracts the
+      // helper declarations with it.
+      assert.deepEqual(
+        mock.rawPi.getActiveTools(),
+        action === "shutdown" ? ["read", "write", ...PLAN_HELPERS] : ["read", "write"],
+      );
     }
   } finally {
     await rm(exportRoot, { recursive: true, force: true });

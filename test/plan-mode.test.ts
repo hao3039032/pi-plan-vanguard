@@ -100,7 +100,8 @@ test("/plan settings opens in TUI and RPC and rejects print and JSON modes", asy
 
   assert.equal(interactiveLoads, 2);
   assert.deepEqual(settingsModes, ["tui", "rpc"]);
-  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash", "plan_mode_question", "plan_mode_complete"]);
+  // Opening settings never enters Plan mode, so the helpers stay undeclared.
+  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash"]);
   assert.deepEqual(mock.entries, []);
 });
 
@@ -222,7 +223,7 @@ test("malformed persisted Plan state fails closed", async () => {
     });
     await mock.events.get("session_start")?.[0]?.({}, context.ctx);
     assert.equal(context.statuses.get("plan-mode"), undefined);
-    assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write", "plan_mode_question", "plan_mode_complete"]);
+    assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write"]);
   } finally {
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
@@ -285,6 +286,7 @@ test("session resume restores active Plan state and required tools", async () =>
     assert.equal(context.statuses.get("plan-mode"), "plan ready");
     assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write", "plan_mode_question", "plan_mode_complete"]);
     await mock.events.get("session_shutdown")?.[0]?.({}, context.ctx);
+    // Shutdown does not leave Plan mode, so the restored helpers stay declared.
     assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write", "plan_mode_question", "plan_mode_complete"]);
   } finally {
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
@@ -293,14 +295,19 @@ test("session resume restores active Plan state and required tools", async () =>
   }
 });
 
-test("session restore fails closed when required Plan helpers are inactive", async () => {
+test("session restore fails closed when the tool policy filters out the Plan helpers", async () => {
   const restoredState = {
     type: "custom",
     customType: "plan-mode-state",
     data: { enabled: true, awaitingAction: false },
   };
   const mock = createMockPi({ activeTools: ["read"] });
-  mock.rawPi.setActiveTools(["read"]);
+  // Simulate a restrictive `--tools`/`--exclude-tools` policy: the names are silently dropped, so
+  // Plan mode's own activation cannot succeed and the restore must fail closed.
+  mock.rawPi.setActiveTools = (names) => {
+    mock.rawPi.getActiveTools = () => names.filter((name) => !name.startsWith("plan_mode_"));
+  };
+  mock.rawPi.getActiveTools = () => ["read"];
   planMode(mock.pi);
   const context = createMockContext({
     hasUI: true,
@@ -315,9 +322,13 @@ test("session restore fails closed when required Plan helpers are inactive", asy
   assert.deepEqual(mock.rawPi.getActiveTools(), ["read"]);
   assert.match(context.notifications.at(-1)?.message ?? "", /helper tools are unavailable/i);
 
-  mock.rawPi.setActiveTools(["read", "plan_mode_question", "plan_mode_complete"]);
+  // Widening the policy lets the next start declare the helpers on its own.
+  mock.rawPi.setActiveTools = (names) => {
+    mock.rawPi.getActiveTools = () => [...names];
+  };
   await mock.commands.get("plan")?.handler("start", context.ctx);
   assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
+  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "plan_mode_question", "plan_mode_complete"]);
 });
 
 test("session restore uses only the active branch state", async () => {
@@ -527,7 +538,7 @@ test("Plan activation adds only its helpers to an intentionally empty active-too
   await mock.commands.get("plan")?.handler("start", context.ctx);
   assert.deepEqual(mock.rawPi.getActiveTools(), ["plan_mode_question", "plan_mode_complete"]);
   await mock.commands.get("plan")?.handler("exit", context.ctx);
-  assert.deepEqual(mock.rawPi.getActiveTools(), ["plan_mode_question", "plan_mode_complete"]);
+  assert.deepEqual(mock.rawPi.getActiveTools(), [], "exit returns the set to its pre-Plan state");
 });
 
 test("manual thinking changes survive active Plan-mode shutdown and resume", async () => {
@@ -580,7 +591,8 @@ test("Plan lifecycle enters with a prompt and hands a valid plan to implementati
   );
   assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash", "custom", "plan_mode_question", "plan_mode_complete"]);
   await mock.events.get("agent_settled")?.[0]?.({}, context.ctx);
-  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash", "custom", "plan_mode_question", "plan_mode_complete"]);
+  // The implementation handoff leaves Plan mode, which retracts the helper declarations.
+  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash", "custom"]);
   assert.equal(mock.sentUserMessages.at(-1)?.text, "Implement the plan.");
   assert.equal(context.statuses.get("plan-mode"), undefined);
 });
@@ -709,7 +721,8 @@ test("busy inactive Plan starts fail observably without changing state in every 
       } else {
         await assert.rejects(async () => command.handler(input, context.ctx), /run is active.*retry/i);
       }
-      assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write", "plan_mode_question", "plan_mode_complete"]);
+      // A rejected start never declares the helpers.
+      assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "write"]);
       assert.equal(mock.entries.length, 0);
       assert.equal(mock.sentUserMessages.length, 0);
     }
@@ -932,7 +945,8 @@ test("plan implement fails closed without a plan and hands off a stored plan", a
   await execute("complete", { plan: "# Implement me" }, undefined, undefined, context.ctx);
   await mock.commands.get("plan")?.handler("implement", context.ctx);
   assert.equal(context.statuses.get("plan-mode"), undefined);
-  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "custom", "plan_mode_question", "plan_mode_complete"]);
+  // The handoff leaves Plan mode, so the helper declarations are retracted again.
+  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "custom"]);
   assert.equal(mock.sentUserMessages.at(-1)?.text, "Implement the plan.");
 });
 
@@ -958,17 +972,18 @@ test("inline prompt delivery failure rolls back newly entered Plan mode", async 
   const context = createMockContext({ mode: "tui", hasUI: true });
   await mock.commands.get("plan")?.handler("design it", context.ctx);
   assert.equal(context.statuses.get("plan-mode"), undefined);
-  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash", "plan_mode_question", "plan_mode_complete"]);
+  // A rolled-back activation also retracts the helpers it declared.
+  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash"]);
   assert.match(context.notifications.at(-1)?.message ?? "", /no longer active/);
 });
 
-test("failed activation contract and state commits preserve the stable helper envelope", async () => {
+test("failed activation contract and state commits leave no helper declarations behind", async () => {
   for (const failure of ["contract", "state"] as const) {
     const mock = createMockPi({ activeTools: ["read"] });
     planMode(mock.pi);
     const context = createMockContext({ hasUI: true });
     await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
-    assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "plan_mode_question", "plan_mode_complete"]);
+    assert.deepEqual(mock.rawPi.getActiveTools(), ["read"]);
 
     if (failure === "contract") {
       mock.rawPi.sendMessage = () => {
@@ -995,7 +1010,7 @@ test("failed activation contract and state commits preserve the stable helper en
       mock.rawPi.appendEntry = appendEntry;
     }
 
-    assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "plan_mode_question", "plan_mode_complete"]);
+    assert.deepEqual(mock.rawPi.getActiveTools(), ["read"]);
     assert.equal(context.statuses.get("plan-mode"), undefined);
   }
 });

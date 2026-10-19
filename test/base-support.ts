@@ -157,7 +157,17 @@ export function createMockPi(
       activeTools = [...names];
     },
     getAllTools() {
-      return allTools;
+      // Pi reports every registered tool, not only the ones given as fixtures.
+      const byName = new Map<string, unknown>();
+      for (const tool of allTools) {
+        const name = (tool as { name?: unknown }).name;
+        if (typeof name === "string") byName.set(name, tool);
+      }
+      for (const tool of tools) {
+        const name = (tool as { name?: unknown }).name;
+        if (typeof name === "string") byName.set(name, tool);
+      }
+      return [...byName.values()];
     },
     getThinkingLevel() {
       return thinkingLevel;

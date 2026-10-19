@@ -72,7 +72,8 @@ test("ready plan export ends Plan mode without triggering a model turn", async (
     assert.equal(persistedState.enabled, false);
     assert.equal(persistedState.latestPlan, undefined);
     assert.equal(persistedState.awaitingAction, false);
-    assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit", "plan_mode_question", "plan_mode_complete"]);
+    // Exporting a ready plan leaves Plan mode, so the helper declarations are retracted.
+    assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit"]);
     assert.equal(mock.thinkingLevel, "low");
     assert.equal(mock.sentUserMessages.length, 0);
     assert.equal(mock.sentMessages.length, 2, "Plan and Normal contracts do not trigger turns");

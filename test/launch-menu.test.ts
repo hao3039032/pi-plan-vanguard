@@ -10,8 +10,10 @@ import { readPlanModeSettings } from "../src/settings.js";
 import { builtinTool, createMockContext, createMockPi, extensionTool } from "./support.js";
 
 const REQUIRED_PLAN_TOOLS = ["plan_mode_question", "plan_mode_complete"];
-const STARTUP_TOOLS = ["read", "write", "custom", ...REQUIRED_PLAN_TOOLS];
-const STABLE_TOOLS = STARTUP_TOOLS;
+/** What a Normal session starts with: the helpers are registered inactive. */
+const STARTUP_TOOLS = ["read", "write", "custom"];
+/** What an active Plan workflow declares: the startup set plus the helpers. */
+const PLAN_TOOLS = [...STARTUP_TOOLS, ...REQUIRED_PLAN_TOOLS];
 
 async function settleWithin<T>(promise: Promise<T>, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -43,7 +45,7 @@ async function waitForOpenCount(tui: ReturnType<typeof createTuiHarness>, count:
 
 function launchFixture() {
   const mock = createMockPi({
-    activeTools: STABLE_TOOLS,
+    activeTools: STARTUP_TOOLS,
     allTools: [builtinTool("read"), builtinTool("write"), extensionTool("custom")],
   });
   planMode(mock.pi, { readSettings: async () => ({ kind: "missing" as const }) });
@@ -52,7 +54,7 @@ function launchFixture() {
 
 function launchFixtureWithSettings(readSettings: () => ReturnType<typeof readPlanModeSettings>) {
   const mock = createMockPi({
-    activeTools: STABLE_TOOLS,
+    activeTools: STARTUP_TOOLS,
     allTools: [builtinTool("read"), builtinTool("write"), extensionTool("custom")],
   });
   planMode(mock.pi, { readSettings });
@@ -71,12 +73,12 @@ test("inactive bare /plan opens a TUI launch menu without changing Plan state", 
   assert.match(frame.join("\n"), /Status: Off/i);
   assert.match(frame.join("\n"), /Start Plan mode/);
   assert.ok(frame.every((line) => line.length <= 42));
-  assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+  assert.deepEqual(mock.rawPi.getActiveTools(), STARTUP_TOOLS);
   assert.equal(mock.entries.length, 0);
 
   tui.press("tui.select.cancel");
   await running;
-  assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+  assert.deepEqual(mock.rawPi.getActiveTools(), STARTUP_TOOLS);
   assert.equal(mock.entries.length, 0);
   assert.equal(mock.sentUserMessages.length, 0);
 });
@@ -101,11 +103,11 @@ test("customized plan-mode shortcut from settings toggles Plan mode", async () =
   assert.equal(mock.shortcuts.has("ctrl+alt+p"), false);
 
   await toggle.handler(context.ctx);
-  assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+  assert.deepEqual(mock.rawPi.getActiveTools(), PLAN_TOOLS);
   assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
 
   await toggle.handler(context.ctx);
-  assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+  assert.deepEqual(mock.rawPi.getActiveTools(), STARTUP_TOOLS);
   assert.equal(context.statuses.get("plan-mode"), undefined);
 });
 
@@ -131,12 +133,12 @@ test("customized plan-mode shortcut rejects mode changes during an active run", 
 
   idle = true;
   await toggle.handler(context.ctx);
-  assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+  assert.deepEqual(mock.rawPi.getActiveTools(), PLAN_TOOLS);
   const entriesAfterStart = mock.entries.length;
 
   idle = false;
   await toggle.handler(context.ctx);
-  assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+  assert.deepEqual(mock.rawPi.getActiveTools(), PLAN_TOOLS);
   assert.equal(mock.entries.length, entriesAfterStart);
   assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
   assert.match(context.notifications.at(-1)?.message ?? "", /run is active.*retry/i);
@@ -152,11 +154,11 @@ test("customized plan-mode shortcut from settings supports ctrl+alt+p", async ()
   const toggle = mock.shortcuts.get("ctrl+alt+p");
   assert.ok(toggle, "custom shortcut should be registered");
   await toggle.handler(context.ctx);
-  assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+  assert.deepEqual(mock.rawPi.getActiveTools(), PLAN_TOOLS);
   assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
 
   await toggle.handler(context.ctx);
-  assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+  assert.deepEqual(mock.rawPi.getActiveTools(), STARTUP_TOOLS);
   assert.equal(context.statuses.get("plan-mode"), undefined);
 });
 
@@ -174,7 +176,7 @@ test("the inactive launch menu opens Settings without starting Plan mode", async
   await settleWithin(tui.waitForPending(), "the Settings transition");
   await waitForOpenCount(tui, 2, running);
   assert.match(tui.render().join("\n"), /Plan Mode Settings/);
-  assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+  assert.deepEqual(mock.rawPi.getActiveTools(), STARTUP_TOOLS);
   assert.equal(mock.entries.length, 0);
 
   tui.press("ctrl+c");
@@ -219,7 +221,7 @@ test("persisted Settings become the baseline for the next Plan workflow", async 
   try {
     await writeFile(settingsPath, '{"thinkingLevel":"off"}\n');
     const mock = createMockPi({
-      activeTools: STABLE_TOOLS,
+      activeTools: STARTUP_TOOLS,
       allTools: [builtinTool("read"), builtinTool("write")],
       thinkingLevel: "low",
     });
@@ -248,7 +250,7 @@ test("the launch menu starts Plan mode only after explicit confirmation", async 
   tui.press("tui.select.confirm");
   await running;
 
-  assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+  assert.deepEqual(mock.rawPi.getActiveTools(), PLAN_TOOLS);
   assert.equal(mock.sentUserMessages.length, 0);
   assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
 });
@@ -281,7 +283,7 @@ test("launch tool choices remain draft-only until Done starts Plan mode", async 
   tui.press("tui.select.confirm");
   await settleWithin(running, "launch menu completion");
 
-  assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+  assert.deepEqual(mock.rawPi.getActiveTools(), PLAN_TOOLS);
   assert.equal(mock.sentUserMessages.length, 0);
 });
 
@@ -338,7 +340,7 @@ test("inactive bare /plan adapts the launch menu to RPC", async () => {
   rpc.assertConsumed();
   assert.equal(
     rpc.dialogs[0]?.title,
-    "Plan mode\nStatus: Off — visible Plan helpers stay inactive until /plan starts.\nPlan policy will allow: read.",
+    "Plan mode\nStatus: Off — Plan helpers stay undeclared until /plan starts.\nPlan policy will allow: read.",
   );
   assert.deepEqual(rpc.dialogs[0]?.options, [
     "Start Plan mode",
@@ -346,7 +348,7 @@ test("inactive bare /plan adapts the launch menu to RPC", async () => {
     "Settings",
     "How Plan mode works",
   ]);
-  assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+  assert.deepEqual(mock.rawPi.getActiveTools(), PLAN_TOOLS);
   assert.equal(mock.sentUserMessages.length, 0);
 });
 
@@ -368,7 +370,7 @@ test("RPC stages tool changes until the explicit start action", async () => {
 
   await mock.commands.get("plan")?.handler("", context.ctx);
   rpc.assertConsumed();
-  assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+  assert.deepEqual(mock.rawPi.getActiveTools(), PLAN_TOOLS);
   assert.equal(mock.sentUserMessages.length, 0);
 });
 
@@ -464,7 +466,7 @@ test("Ctrl+C and external disposal discard the inactive launch interaction", asy
     else tui.dispose();
     await settleWithin(running, `${ending} launch cancellation`);
 
-    assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+    assert.deepEqual(mock.rawPi.getActiveTools(), STARTUP_TOOLS);
     assert.equal(mock.entries.length, 0);
     assert.equal(mock.thinkingLevels.length, 0);
     assert.equal(mock.sentUserMessages.length, 0);
@@ -509,7 +511,7 @@ test("/plan tools reuses the pre-start draft and cancellation has no side effect
     const running = mock.commands.get("plan")?.handler("tools", context.ctx) as Promise<unknown>;
     await waitForOpenCount(tui, 1, running);
     assert.match(tui.render().join("\n"), /Choose Plan policy allowlist/);
-    assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+    assert.deepEqual(mock.rawPi.getActiveTools(), STARTUP_TOOLS);
     assert.equal(mock.entries.length, 0);
 
     if (ending === "cancel") tui.press("tui.select.cancel");
@@ -520,7 +522,7 @@ test("/plan tools reuses the pre-start draft and cancellation has no side effect
     }
     await settleWithin(running, `${ending} /plan tools completion`);
 
-    assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+    assert.deepEqual(mock.rawPi.getActiveTools(), ending === "done" ? PLAN_TOOLS : STARTUP_TOOLS);
     assert.equal(context.statuses.get("plan-mode"), ending === "done" ? "plan active (srt)" : undefined);
     assert.equal(mock.entries.length > 0, ending === "done");
   }
@@ -540,7 +542,8 @@ test("/plan tools compatibility shortcut stages directly in RPC", async () => {
   await mock.commands.get("plan")?.handler("tools", context.ctx);
   rpc.assertConsumed();
   assert.match(rpc.dialogs[0]?.title ?? "", /Choose Plan policy allowlist/);
-  assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+  // The shortcut stages and starts in one step, so the helpers are declared.
+  assert.deepEqual(mock.rawPi.getActiveTools(), PLAN_TOOLS);
 });
 
 test("active Plan mode locks Settings and /plan tools", async () => {
@@ -560,7 +563,7 @@ test("active Plan mode locks Settings and /plan tools", async () => {
   await mock.commands.get("plan")?.handler("tools", context.ctx);
 
   assert.match(context.notifications.at(-1)?.message ?? "", /before starting|locked/i);
-  assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+  assert.deepEqual(mock.rawPi.getActiveTools(), PLAN_TOOLS);
   assert.equal(mock.entries.length, beforeEntries);
 });
 
@@ -572,7 +575,7 @@ test("/plan tools rejects non-interactive modes before changing state", async ()
       mock.commands.get("plan")?.handler("tools", context.ctx) as Promise<unknown>,
       /requires TUI or RPC|unavailable/i,
     );
-    assert.deepEqual(mock.rawPi.getActiveTools(), STABLE_TOOLS);
+    assert.deepEqual(mock.rawPi.getActiveTools(), STARTUP_TOOLS);
     assert.equal(mock.entries.length, 0);
   }
 });
@@ -585,13 +588,13 @@ test("/plan start is deterministic and bare /plan rejects non-interactive modes"
       rejected.commands.get("plan")?.handler("", rejectedContext.ctx) as Promise<unknown>,
       /\/plan start.*\/plan <prompt>/i,
     );
-    assert.deepEqual(rejected.rawPi.getActiveTools(), STABLE_TOOLS);
+    assert.deepEqual(rejected.rawPi.getActiveTools(), STARTUP_TOOLS);
     assert.equal(rejected.entries.length, 0);
 
     const started = launchFixture();
     const startedContext = createMockContext({ mode, hasUI: false });
     await started.commands.get("plan")?.handler("start", startedContext.ctx);
-    assert.deepEqual(started.rawPi.getActiveTools(), STABLE_TOOLS);
+    assert.deepEqual(started.rawPi.getActiveTools(), PLAN_TOOLS);
     assert.equal(started.sentUserMessages.length, 0);
   }
 });

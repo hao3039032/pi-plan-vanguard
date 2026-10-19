@@ -12,7 +12,7 @@ export function planModeHelperToolsAvailable(toolNames: readonly string[]) {
 export function assertPlanModeHelperToolsAvailable(toolNames: readonly string[]) {
   if (planModeHelperToolsAvailable(toolNames)) return;
   throw new Error(
-    "plan_mode_question and plan_mode_complete are unavailable; include them in the active tool allowlist or leave the restrictive tool mode before starting Plan mode",
+    "plan_mode_question and plan_mode_complete could not be activated; the active tool policy (for example `--tools` or `--exclude-tools`) filters them out. Widen that policy before starting Plan mode",
   );
 }
 

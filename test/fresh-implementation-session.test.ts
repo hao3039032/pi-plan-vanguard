@@ -587,7 +587,8 @@ test("fresh destination adopts setup state before kickoff for guaranteed-plan po
     const handoff = `Plan mode is now disabled. Full tool access is restored. Implement this proposed plan now:\n\n${PLAN}`;
     await mock.events.get("before_agent_start")?.[0]?.({ prompt: handoff, systemPrompt: "system" }, context.ctx);
     assert.equal(context.statuses.get("plan-mode"), "plan implementing");
-    assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit", "plan_mode_question", "plan_mode_complete"]);
+    // This session is not in Plan mode, so no helper declarations are added.
+    assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit"]);
 
     const firstContext = (await mock.events.get("context")?.[0]?.(
       { messages: [{ role: "user", content: handoff }] },

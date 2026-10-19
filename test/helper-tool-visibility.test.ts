@@ -11,6 +11,6 @@ test("Plan helper availability accepts the stable registered envelope", () => {
 test("Plan helper availability rejects a restrictive envelope without mutating it", () => {
   const tools = ["read", "plan_mode_question"];
   assert.equal(planModeHelperToolsAvailable(tools), false);
-  assert.throws(() => assertPlanModeHelperToolsAvailable(tools), /plan_mode_complete are unavailable/u);
+  assert.throws(() => assertPlanModeHelperToolsAvailable(tools), /could not be activated/u);
   assert.deepEqual(tools, ["read", "plan_mode_question"]);
 });

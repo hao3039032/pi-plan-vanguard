@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 import planMode from "./support.js";
-import { builtinTool, createMockContext, createMockPi, extensionTool } from "./support.js";
+import { builtinTool, createMockContext, createMockPi, extensionTool, PLAN_HELPER_TOOLS } from "./support.js";
+
+/** The active set after declaring the Plan helpers on top of `base`. */
+function planModeHelperEnvelope(base: string[]): string[] {
+  return [...base, ...PLAN_HELPER_TOOLS];
+}
 
 interface CapturedRequest {
   phase: "normal" | "plan" | "implementation";
@@ -107,10 +112,12 @@ test("first-context policy resolution does not mutate late active tool schemas",
 
   assert.deepEqual(request.activeTools, activeBeforeContext);
   assert.deepEqual(request.providerPayload.tools, definitionsBeforeContext);
-  assert.deepEqual(activeToolWrites, []);
+  // Entering Plan mode declares the helpers once; the policy resolution that follows must not
+  // touch the tool set again.
+  assert.deepEqual(activeToolWrites, [planModeHelperEnvelope(["read"])]);
 });
 
-test("stable Plan helper schema keeps request fields and inactive metadata safe", async () => {
+test("Plan mode declares its helpers on entry and retracts them on exit", async () => {
   const allTools = [builtinTool("read"), builtinTool("bash"), builtinTool("edit"), builtinTool("write")];
   const mock = createMockPi({ activeTools: ["read", "bash", "edit", "write"], allTools });
   planMode(mock.pi, {
@@ -141,13 +148,21 @@ test("stable Plan helper schema keeps request fields and inactive metadata safe"
     { role: "user", content: "Implement the plan." },
   ]);
 
-  assert.deepEqual(plan.activeTools, normal.activeTools);
+  // Plan mode owns the helper declarations: they appear on entry and disappear on the
+  // implementation handoff, which leaves Plan mode. Everything else differs only by that delta.
+  assert.deepEqual(plan.activeTools, [...normal.activeTools, ...PLAN_HELPER_TOOLS]);
   assert.deepEqual(implementation.activeTools, normal.activeTools);
   assert.equal(plan.systemPrompt, normal.systemPrompt);
   assert.equal(implementation.systemPrompt, normal.systemPrompt);
-  assert.deepEqual(plan.providerPayload.tools, normal.providerPayload.tools);
+  assert.deepEqual(
+    plan.providerPayload.tools.filter((tool) => !tool.name.startsWith("plan_mode_")),
+    normal.providerPayload.tools,
+  );
   assert.deepEqual(implementation.providerPayload.tools, normal.providerPayload.tools);
-  assert.deepEqual(plan.activePromptMetadata, normal.activePromptMetadata);
+  assert.deepEqual(
+    plan.activePromptMetadata.filter((tool) => !tool.name.startsWith("plan_mode_")),
+    normal.activePromptMetadata,
+  );
   assert.deepEqual(implementation.activePromptMetadata, normal.activePromptMetadata);
   assert.equal(plan.providerPayload.instructions, normal.providerPayload.instructions);
   assert.equal(implementation.providerPayload.instructions, normal.providerPayload.instructions);
@@ -160,10 +175,13 @@ test("stable Plan helper schema keeps request fields and inactive metadata safe"
       .map((message) => (message as { content?: unknown }).content),
     ["A", "B", "Implement the plan."],
   );
-  const helperMetadata = normal.activePromptMetadata.filter((tool) => tool.name.startsWith("plan_mode_"));
+  const normalHelpers = normal.activePromptMetadata.filter((tool) => tool.name.startsWith("plan_mode_"));
+  assert.deepEqual(normalHelpers, [], "a Normal request carries no Plan helper schema");
+  const helperMetadata = plan.activePromptMetadata.filter((tool) => tool.name.startsWith("plan_mode_"));
   assert.equal(helperMetadata.length, 2);
   assert.ok(helperMetadata.every((tool) => tool.promptSnippet === undefined && tool.promptGuidelines === undefined));
-  const helperDefinitions = normal.providerPayload.tools.filter((tool) => tool.name.startsWith("plan_mode_"));
+  const helperDefinitions = plan.providerPayload.tools.filter((tool) => tool.name.startsWith("plan_mode_"));
+  assert.equal(helperDefinitions.length, 2);
   assert.ok(
     helperDefinitions.every((tool) =>
       /tool visibility alone does not activate Plan mode/i.test(String(tool.description)),

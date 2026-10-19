@@ -5,7 +5,9 @@ import planMode from "./support.js";
 import { builtinTool, createMockContext, createMockPi } from "./support.js";
 
 const PLAN = "# Branch-owned plan\n\n1. Restore this branch.";
-const BASELINE = ["read", "bash", "edit", "write", "plan_mode_question", "plan_mode_complete"];
+const BASELINE = ["read", "bash", "edit", "write"];
+/** An active Plan workflow declares the helpers on top of the baseline. */
+const PLAN_ENVELOPE = [...BASELINE, "plan_mode_question", "plan_mode_complete"];
 
 function stateEntry(data: Record<string, unknown>) {
   return { type: "custom", customType: "plan-mode-state", data };
@@ -100,14 +102,8 @@ test("manual tree navigation restores branch-owned mode state without changing t
   await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
   const tree = mock.events.get("session_tree")?.[0];
   assert.ok(tree);
-  assert.deepEqual(mock.rawPi.getActiveTools(), [
-    "read",
-    "bash",
-    "edit",
-    "write",
-    "plan_mode_question",
-    "plan_mode_complete",
-  ]);
+  // A Normal session declares no Plan helper schemas.
+  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "bash", "edit", "write"]);
 
   branch.splice(
     0,
@@ -123,7 +119,7 @@ test("manual tree navigation restores branch-owned mode state without changing t
   await tree({}, context.ctx);
   assert.equal(context.statuses.get("plan-mode"), "plan active (srt)");
   assert.equal(mock.thinkingLevel, "medium");
-  assert.deepEqual(mock.rawPi.getActiveTools(), BASELINE);
+  assert.deepEqual(mock.rawPi.getActiveTools(), PLAN_ENVELOPE);
 
   branch.splice(
     0,

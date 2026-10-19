@@ -269,7 +269,7 @@ test("implementation transition rejects a busy run before committing and succeed
   await mock.commands.get("plan")?.handler("implement", context.ctx);
   assert.equal(context.statuses.get("plan-mode"), "plan implementing");
   assert.match(renderMockWidget(context.widgets.get("plan-mode-plan")).join("\n"), /implementation plan active/i);
-  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit", "plan_mode_question", "plan_mode_complete"]);
+  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit"]);
   assert.equal(mock.sentUserMessages.at(-1)?.options, undefined);
   const activeState = latestState(mock.entries);
   assert.equal(activeState?.activeImplementation?.plan, PLAN);
@@ -341,7 +341,7 @@ test("a failed superseding prompt restores the exact active implementation", asy
   await mock.commands.get("plan")?.handler("design a replacement", context.ctx);
 
   assert.equal(context.statuses.get("plan-mode"), "plan implementing");
-  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit", "plan_mode_question", "plan_mode_complete"]);
+  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit"]);
   const restored = latestState(mock.entries);
   assert.equal(restored?.enabled, false);
   assert.deepEqual(restored?.activeImplementation, activeBeforeFailure);
@@ -543,7 +543,7 @@ test("shutdown cancellation cannot let a stale pre-start tool menu activate Plan
   await mock.events.get("session_shutdown")?.[0]?.({}, context.ctx);
   await pendingMenu;
 
-  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit", "plan_mode_question", "plan_mode_complete"]);
+  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit"]);
   assert.equal(context.statuses.get("plan-mode"), undefined);
 });
 
@@ -573,7 +573,7 @@ test("a state change while a pre-start tool menu is open cannot activate Plan mo
   menuHarness.handleInput("tui.select.cancel");
   await pendingMenu;
 
-  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit", "plan_mode_question", "plan_mode_complete"]);
+  assert.deepEqual(mock.rawPi.getActiveTools(), ["read", "edit"]);
   assert.equal(context.statuses.get("plan-mode"), undefined);
 });
 

@@ -15,11 +15,14 @@ export {
 
 const PLAN_HELPERS = ["plan_mode_question", "plan_mode_complete"];
 
+/**
+ * The Plan helpers are registered with `defaultActive: false`, so a real session starts without
+ * them. Tests that want them pre-declared pass them explicitly in `activeTools`.
+ */
+export const PLAN_HELPER_TOOLS = PLAN_HELPERS;
+
 export function createMockPi(options: Parameters<typeof createBaseMockPi>[0] = {}) {
-  return createBaseMockPi({
-    ...options,
-    activeTools: [...new Set([...(options.activeTools ?? []), ...PLAN_HELPERS])],
-  });
+  return createBaseMockPi(options);
 }
 
 /** A healthy sandbox diagnosis used by default in tests. */

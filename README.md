@@ -141,7 +141,7 @@ Plan-mode exploration is enforced by the **Anthropic Sandbox Runtime ([srt](http
 | Windows (alpha) | srt-win + WFP | one-time elevated `npx @anthropic-ai/sandbox-runtime windows-install`; PowerShell remains blocked in v1 |
 
 Set `PI_PLAN_MODE_SRT_PATH` to use a non-PATH srt binary.
-While Plan mode is active, it also instructs the agent not to edit files or implement the change, and another active-tool policy hiding `plan_mode_question`/`plan_mode_complete` still fails Plan start without widening that policy.
+While Plan mode is active, it also instructs the agent not to edit files or implement the change. The two helper tools are registered inactive and declared only for an active Plan workflow, and an active-tool policy that filters them out still fails Plan start instead of widening that policy.
 
 **Plan documents.** The plan output directory (default `plans/`, configurable via `planOutputDir`) is created at Plan start if missing and is sandbox-writable: the agent may draft and iterate Markdown there from the shell or with the built-in `write`/`edit` tools — a successful `write`/`edit` of a Markdown file there, or a Plan-mode `bash` call after which a top-level Markdown file in the directory is newer than the call (subdirectories are not scanned), annotates the tool result with `📄 Plan draft updated → <path>` — while every accepted `plan_mode_complete` plan is persisted by the extension as `plans/YYYY-MM-DD-<slug>.md` — revisions overwrite the same file, new workflows create a new one. The TUI renders the finished plan with a `📄 <path>` footer, the ready-plan menu lists the same path, and `/plan show` renders the draft or finished document on demand. Track `plans/` in git (or ignore it) as you prefer.
 
@@ -292,10 +292,10 @@ Manual `/tree` navigation restores branch-owned Plan state and chooses the match
 Pi lists hidden transition messages in `/tree`; Plan mode rejects those internal targets, so select an adjacent conversation entry.
 
 Plan mode registers `plan_mode_question` and `plan_mode_complete` once and keeps their names and definitions stable across Normal, Plan, ready, implementation, and restored workflows.
-Visible helpers do not mean `/plan` is active, and their descriptions exclude ordinary planning, the `writing-plans` skill, roadmaps, checklists, and plan-file work.
+Both are registered with `defaultActive: false`, so a Normal session carries no Plan helper schema in its requests; entering Plan mode declares them and leaving Plan mode — `/plan exit`, save, export, or the implementation handoff — retracts them again.
 Only the latest active Plan contract authorizes the helpers; inactive or stale calls fail without accepting a plan or opening question UI.
-Plan mode does not widen a restrictive active-tool policy; start or restore fails when a required helper is unavailable.
-Stable schemas preserve a cache-eligible prefix but cannot guarantee a hit because provider serialization, cache lifetime, minimum prefix size, implementation details, and session affinity remain external.
+Plan mode does not widen a restrictive active-tool policy; start or restore fails when a required helper cannot be activated.
+The tool set therefore changes exactly once per mode transition, next to the contract message and the thinking level that already change there, instead of costing helper schemas on every Normal request.
 
 The default `thinkingLevel: "inherit"` avoids a Plan-specific reasoning-parameter change.
 A fixed Plan thinking level remains supported, but changing reasoning parameters can prevent provider-side state reuse even when prompts and tool schemas stay stable.

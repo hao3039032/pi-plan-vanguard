@@ -46,9 +46,12 @@ The shortcut is disabled when `toggleShortcut` is omitted.
 
 ### Plan helper tools
 
-Plan helper schemas are stable from extension registration onward, and Plan mode does not call `setActiveTools()`.
+`plan_mode_question` and `plan_mode_complete` are registered with `defaultActive: false`, so a Normal session never declares them.
+Plan mode owns their activation: `/plan` declares both, and leaving Plan mode — `/plan exit`, save, export, or the implementation handoff — retracts them.
+Each transition writes the active set once, so the request prefix changes at the mode boundary next to the contract message and thinking level, not on every Normal Request.
 Tool visibility alone is not Plan activation.
 Only the latest effective active Plan contract authorizes `plan_mode_question` or `plan_mode_complete`; ordinary planning and the `writing-plans` skill use their own workflow instead.
+An active-tool policy that filters the helper names out (`--tools`, `--exclude-tools`) makes Plan start and Plan restore fail closed instead of widening that policy.
 The retired `toolVisibility` key is ignored and preserved as unknown data when another setting is saved or a legacy settings file is migrated.
 
 ### Default Plan policy tools

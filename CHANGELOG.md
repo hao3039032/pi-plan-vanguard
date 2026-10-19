@@ -1,5 +1,13 @@
 # @hao3039032/pi-plan-vanguard
 
+## 0.64.0 (fork)
+
+### Minor Changes
+
+- **Plan helpers no longer cost every Normal request.** `plan_mode_question` and `plan_mode_complete` now register with `defaultActive: false`, and Plan mode owns their activation: entering declares both, and leaving — `/plan exit`, `/plan save`, ready-plan export, the implementation handoff, or a rolled-back start — retracts them. Previously the pair was registered active and stayed declared in every session, which cost roughly 555 schema tokens per request whether or not the session ever used Plan mode. The old "stable helper envelope" contract justified that with prompt-cache stability, but every mode transition already rewrites the request prefix (contract message, thinking level, sandbox description), so the extra change is marginal while the saving is constant. Restore re-declares the helpers for an enabled workflow, refuses to restore one whose helpers the active-tool policy filters out, and a resumed Normal branch now retracts anything an earlier Plan branch had recorded.
+- `assertPlanModeHelperToolsAvailable()` now describes the real failure mode: the helpers could not be activated because the active tool policy (`--tools`, `--exclude-tools`) filters them out. Plan start still fails closed rather than widening that policy.
+- The launch menu reports `Status: Off — Plan helpers stay undeclared until /plan starts.` and checks registration instead of the active set, since the helpers are inactive by design while Plan mode is off.
+
 ## 0.63.2 (fork)
 
 ### Patch Changes

@@ -82,7 +82,12 @@ import {
   PLAN_MODE_QUESTION_TOOL_NAME,
   planModeQuestionCancelled,
 } from "./question-tool.js";
-import { assertPlanModeHelperToolsAvailable, planModeHelperToolsAvailable } from "./required-tools.js";
+import {
+  assertPlanModeHelperToolsAvailable,
+  planModeHelperToolsAvailable,
+  withRequiredPlanModeTools,
+  withoutRequiredPlanModeTools,
+} from "./required-tools.js";
 import {
   buildPlanSandboxProfile,
   buildSrtSetupGuide,
@@ -376,6 +381,9 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
   pi.registerTool({
     name: PLAN_MODE_QUESTION_TOOL_NAME,
     label: "Plan question",
+    // Registered inactive: `/plan` activates both helpers and leaving Plan mode retracts them, so a
+    // Normal session never carries their schemas. See setPlanModeHelperTools().
+    defaultActive: false,
     description:
       "Ask one to three structured questions only when the latest effective Plan contract explicitly says /plan mode is active. Tool visibility alone does not activate Plan mode. Never call for ordinary planning requests, the writing-plans skill, roadmaps, checklists, or plan-file work.",
     parameters: PLAN_MODE_QUESTION_PARAMS,
@@ -418,6 +426,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
   pi.registerTool({
     name: PLAN_MODE_COMPLETE_TOOL_NAME,
     label: "Complete plan",
+    defaultActive: false,
     description:
       "Submit a decision-ready plan only when the latest effective Plan contract explicitly says /plan mode is active, and call it alone as the final action. Tool visibility alone does not activate Plan mode. Never call for ordinary planning requests, the writing-plans skill, roadmaps, checklists, or plan-file work.",
     parameters: PLAN_MODE_COMPLETE_PARAMS,
@@ -1117,12 +1126,18 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
 
     const previousState = state;
     try {
+      // Declaring the helpers is this workflow's own side effect, so a failure here leaves nothing
+      // behind to undo. The assertion then verifies the post-condition, which a restrictive tool
+      // policy can still refuse.
+      setPlanModeHelperTools(true);
       assertPlanModeHelperToolsAvailable(safeGetActiveTools());
       if (!publishModeContract("plan", ctx)) {
+        setPlanModeHelperTools(false);
         releaseWorkflowOwner();
         return false;
       }
     } catch (error: unknown) {
+      setPlanModeHelperTools(false);
       releaseWorkflowOwner();
       return reportHelperActivationFailure(ctx, error);
     }
@@ -1274,6 +1289,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     readyPresentationIntent = undefined;
     workflowAllowedToolNames = undefined;
     void discardActiveSandbox();
+    setPlanModeHelperTools(false);
     state = {
       ...state,
       enabled: false,
@@ -1927,6 +1943,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     readyPresentationIntent = undefined;
     workflowAllowedToolNames = undefined;
     void discardActiveSandbox();
+    setPlanModeHelperTools(false);
     state = {
       ...state,
       enabled: false,
@@ -2077,6 +2094,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     const usesConversationHistory = retention === "clear-on-start";
     readyPresentationIntent = undefined;
     workflowAllowedToolNames = undefined;
+    setPlanModeHelperTools(false);
     state = {
       ...state,
       enabled: false,
@@ -2121,6 +2139,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
         restoreWorkflowToolPolicy(state.workflowToolPolicy);
         publishModeContract("plan", ctx);
         applyPlanThinkingLevel();
+        setPlanModeHelperTools(true);
       }
       persistState();
       updateUi(ctx);
@@ -2171,9 +2190,12 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     const retainedInactiveNames = retainsInactiveSelection ? initialSelectedNames : new Set<string>();
     const registeredNames = new Set(tools.map((tool) => tool.name));
     const pendingNames = Array.from(retainedInactiveNames).filter((name) => !registeredNames.has(name));
+    const helpersRegistered = safeGetAllTools().some(
+      (tool) => tool.name === PLAN_MODE_QUESTION_TOOL_NAME && tool.exposure !== "hidden",
+    );
     await ui.showPlanLaunchMenu(ctx, {
-      statusText: planModeHelperToolsAvailable(safeGetActiveTools())
-        ? "Status: Off — visible Plan helpers stay inactive until /plan starts."
+      statusText: helpersRegistered
+        ? "Status: Off — Plan helpers stay undeclared until /plan starts."
         : "Status: Off — required Plan helpers are unavailable under the active tool policy.",
       initialScreen,
       getSelectedNames: () => snapshotPlanModeSelectedNames(tools, toolSelectionSnapshot()),
@@ -2775,6 +2797,30 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     }
   }
 
+  /**
+   * Declare or retract the two Plan helper tools.
+   *
+   * The helpers are registered with `defaultActive: false`, so a Normal session does not carry their
+   * schemas in every request. Plan mode owns their activation: entering declares them, leaving
+   * retracts them. Unlike widening the policy mid-workflow, this happens only at the mode boundary,
+   * so the request prefix changes once per transition, next to the contract message and the thinking
+   * level that already change there.
+   */
+  function setPlanModeHelperTools(enabled: boolean): boolean {
+    const current = safeGetActiveTools();
+    const withoutHelpers = withoutRequiredPlanModeTools(current);
+    const next = enabled ? withRequiredPlanModeTools(current) : withoutHelpers;
+    if (arrayEquals(current, next)) return planModeHelperToolsAvailable(next);
+    try {
+      pi.setActiveTools(next);
+    } catch {
+      return false;
+    }
+    // A restrictive policy (`--tools`, `--exclude-tools`) silently drops the names, so verify the
+    // outcome instead of trusting the request.
+    return planModeHelperToolsAvailable(safeGetActiveTools());
+  }
+
   function installRestoredState(candidate: PlanModeState, ctx: ExtensionContext) {
     const previousState = state;
     const previousWorkflowAllowedToolNames = workflowAllowedToolNames;
@@ -2808,6 +2854,9 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     try {
       if (candidate.enabled) {
         try {
+          // A restored workflow owns the helper activation just like a fresh one, because the
+          // helpers are registered inactive and the resumed transcript carries no activation.
+          setPlanModeHelperTools(true);
           assertPlanModeHelperToolsAvailable(safeGetActiveTools());
         } catch {
           state = { enabled: false, awaitingAction: false };
@@ -2817,11 +2866,16 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
             workflowMutex.release(workflowOwner);
             workflowOwner = previousOwner;
           }
+          setPlanModeHelperTools(false);
           releasePreviousSandbox();
           void removeSandboxFiles(candidate.sandbox);
           reportRestoredHelpersUnavailable(ctx);
           return false;
         }
+      }
+      else {
+        // A resumed Normal session must not inherit helpers recorded by an earlier Plan branch.
+        setPlanModeHelperTools(false);
       }
       if (wasEnabled && !candidate.enabled) {
         readyPresentationIntent = undefined;
@@ -2867,6 +2921,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       if (state.enabled) {
         publishModeContract("normal", ctx);
         restoreThinkingLevel();
+        setPlanModeHelperTools(false);
       }
     } finally {
       state = previousState;

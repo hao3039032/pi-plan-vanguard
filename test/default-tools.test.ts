@@ -24,10 +24,10 @@ async function callTool(
   return mock.events.get("tool_call")?.[0]?.({ toolName, input }, context.ctx);
 }
 
-test("Plan lifecycle never mutates the stable helper-tool envelope", async () => {
-  const baseline = ["read", "bash", "edit", "write", "custom", ...HELPERS];
+test("Plan lifecycle scopes the helper overlay to the active workflow", async () => {
+  const base = ["read", "bash", "edit", "write", "custom"];
   const mock = createMockPi({
-    activeTools: ["read", "bash", "edit", "write", "custom"],
+    activeTools: [...base],
     allTools: [
       builtinTool("read"),
       builtinTool("bash"),
@@ -46,13 +46,17 @@ test("Plan lifecycle never mutates the stable helper-tool envelope", async () =>
   const context = createMockContext();
 
   await mock.events.get("session_start")?.[0]?.({ reason: "startup" }, context.ctx);
+  assert.deepEqual(mock.rawPi.getActiveTools(), base, "a Normal session carries no Plan helper schema");
   await mock.commands.get("plan")?.handler("start", context.ctx);
+  assert.deepEqual(mock.rawPi.getActiveTools(), [...base, ...HELPERS]);
   await mock.commands.get("plan")?.handler("exit", context.ctx);
+  assert.deepEqual(mock.rawPi.getActiveTools(), base, "leaving Plan mode retracts the helpers");
   await mock.events.get("session_shutdown")?.[0]?.({ reason: "quit" }, context.ctx);
   await mock.events.get("session_start")?.[0]?.({ reason: "reload" }, context.ctx);
 
-  assert.deepEqual(mock.rawPi.getActiveTools(), baseline);
-  assert.deepEqual(writes, []);
+  assert.deepEqual(mock.rawPi.getActiveTools(), base);
+  // Exactly one write per transition: on entry, then back on exit.
+  assert.deepEqual(writes, [[...base, ...HELPERS], base]);
 });
 
 test("watched retired visibility is ignored while remaining settings still reload", async () => {
