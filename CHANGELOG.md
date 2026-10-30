@@ -1,10 +1,17 @@
 # @hao3039032/pi-plan-vanguard
 
+## 0.65.1 (fork)
+
+### Patch Changes
+
+- **Clarify full built-in codemode admission as product policy, not sandbox safety.** The dedicated `builtin-codemode` classification matches the exact tool name/source/path and remains default-admitted once activated in Pi, including under an empty Plan selection. `tools.*` calls are still individually Plan-checked (bash SRT-wrapped; write/edit and opt-in restrictions unchanged). `models.classify()` / `models.generateImages()` instead use session credentials directly, may send data and incur costs, and do not pass through nested `tool_call` or SRT. Pi's session `store()` and host-managed image/oversized-output temporary files are also outside nested-tool checks, without granting arbitrary script-chosen paths. This full capability is intentionally retained; model globals are not disabled.
+- Correct the 0.65.0 explanation: real Pi 1.4 codemode is `model-only`, which the old core-tool classifier already excluded, so its previous policy was `user-opt-in`, not `blocked`. Synthetic direct-exposure path-collision coverage is separate. Tests now use real model-only metadata and cover active/default and explicit-empty admission, inactive rejection, late admission persistence, nested codemode rejection, and independent nested read/write/opt-in/bash checks. The docs, model prompt and menus distinguish default admission from Pi activation (`defaultTools: ["+codemode"]`) and disclose credential, cost and persistence effects.
+
 ## 0.65.0 (fork)
 
 ### Minor Changes
 
-- **Pi's built-in `codemode` entry tool is now auto-admitted in Plan mode and works by default.** The tool was previously unreachable: Pi's built-in extensions (codemode, mcp, tool-search) load from synthetic paths (`builtin:codemode`), and an entry tool named after its extension produces a path identical to the core-built-in pattern (`builtin:codemode` = `builtin:<tool-name>`), so `isBuiltinTool()` classified it as a core built-in outside the safe list — "blocked", unselectable even through `/plan tools` or `defaultPlanTools`, and every call refused with "its built-in policy is blocked and settings cannot enable it". The collision guard excludes built-in extension names from the core-tool pattern, and the codemode entry tool is classified `sandboxed`: its scripts run in a QuickJS JS sandbox with no host access of their own, and every tool effect flows through nested calls that the Plan policy already checks individually (bash stays SRT-wrapped, edit/write stay blocked outside the plan output directory, opt-in tools stay opt-in), so the orchestrator needs no explicit selection. The `mcp` entry tool gets the same misclassification fix but stays explicit opt-in, and a replacement codemode extension loaded from a file path keeps the documented opt-in rule. The Plan contract now tells the model that codemode is admitted and that each nested call is policy-checked exactly like a direct one.
+- **Pi's built-in `codemode` entry tool became default-admitted in Plan mode once activated in Pi.** Previously the real `model-only` entry required Plan opt-in; it was not blocked by the core-built-in path test. A separate guard handles synthetic direct-entry name/path collisions. This release labeled codemode `sandboxed` and incorrectly described all host effects as nested tool calls; 0.65.1 corrects that classification and disclosure while retaining full default admission, including credentialed/cost-incurring model calls. Ordinary `tools.*` calls remain individually checked. Replacement extensions loaded from file paths retain the ordinary annotation/opt-in policy.
 
 ### Patch Changes
 

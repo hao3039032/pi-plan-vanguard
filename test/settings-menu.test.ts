@@ -66,7 +66,7 @@ test("Plan settings show seven flat workflow rows without materializing a missin
     const frame = tui.render().join("\n");
     assert.match(frame, /Plan Mode Settings/);
     assert.match(frame, /Plan thinking\s+inherit/);
-    assert.match(frame, /Plan policy tools\s+Automatic safe built-ins/);
+    assert.match(frame, /Plan policy tools\s+Automatic admissions/);
     assert.match(frame, /Plan reinjection\s+Off — conversation history only/);
     assert.match(frame, /Fresh model\s+same as plan/);
     assert.match(frame, /Fresh thinking\s+same as plan/);
@@ -190,7 +190,8 @@ test("Default tools distinguish automatic, explicit empty, user risk, blocked ro
     let frame = tui.render().join("\n");
     assert.match(frame, /Default Plan policy allowlist/);
     assert.match(frame, /user risk/i);
-    assert.match(frame, /Use automatic safe built-ins/);
+    assert.match(frame, /models use credentials\/cost outside tool policy/);
+    assert.match(frame, /Use automatic admissions/);
     tui.press("tui.select.down");
     assert.match(tui.render().join("\n"), /Blocked by Plan-mode policy/i);
     tui.press("tui.select.up");
@@ -215,7 +216,7 @@ test("Default tools distinguish automatic, explicit empty, user risk, blocked ro
     await tui.waitForOpen();
     for (let index = 0; index < 3; index += 1) tui.press("tui.select.down");
     frame = tui.render().join("\n");
-    assert.match(frame, /Use automatic safe built-ins/);
+    assert.match(frame, /Use automatic admissions/);
     tui.press("tui.select.confirm");
     await tui.waitForPending();
     await tui.waitForOpen();
@@ -495,7 +496,7 @@ test("RPC Settings changes retention and export destination with the same flat n
         kind: "select",
         options: [
           "Plan thinking (inherit)",
-          "Plan policy tools (Automatic safe built-ins)",
+          "Plan policy tools (Automatic admissions)",
           "Delegation agents (plan-scout + verified read-only only)",
           "Delegation scripts (blocked)",
           "Plan reinjection (Off — conversation history only)",
@@ -517,7 +518,7 @@ test("RPC Settings changes retention and export destination with the same flat n
         kind: "select",
         options: [
           "Plan thinking (inherit)",
-          "Plan policy tools (Automatic safe built-ins)",
+          "Plan policy tools (Automatic admissions)",
           "Delegation agents (plan-scout + verified read-only only)",
           "Delegation scripts (blocked)",
           "Plan reinjection (Through first implementation run)",
@@ -544,7 +545,7 @@ test("RPC Settings changes retention and export destination with the same flat n
         kind: "select",
         options: [
           "Plan thinking (inherit)",
-          "Plan policy tools (Automatic safe built-ins)",
+          "Plan policy tools (Automatic admissions)",
           "Delegation agents (plan-scout + verified read-only only)",
           "Delegation scripts (blocked)",
           "Plan reinjection (Through first implementation run)",
@@ -580,7 +581,7 @@ test("Plan settings adapt to RPC cancellation and disposal aborts an in-flight s
       kind: "select",
       options: [
         "Plan thinking (inherit)",
-        "Plan policy tools (Automatic safe built-ins)",
+        "Plan policy tools (Automatic admissions)",
         "Delegation agents (plan-scout + verified read-only only)",
         "Delegation scripts (blocked)",
         "Plan reinjection (Off — conversation history only)",
@@ -642,7 +643,7 @@ test("Plan output dir and sandbox rows save through the settings menu", async ()
         kind: "select",
         options: [
           "Plan thinking (inherit)",
-          "Plan policy tools (Automatic safe built-ins)",
+          "Plan policy tools (Automatic admissions)",
           "Delegation agents (plan-scout + verified read-only only)",
           "Delegation scripts (blocked)",
           "Plan reinjection (Off — conversation history only)",
@@ -665,7 +666,7 @@ test("Plan output dir and sandbox rows save through the settings menu", async ()
         kind: "select",
         options: [
           "Plan thinking (inherit)",
-          "Plan policy tools (Automatic safe built-ins)",
+          "Plan policy tools (Automatic admissions)",
           "Delegation agents (plan-scout + verified read-only only)",
           "Delegation scripts (blocked)",
           "Plan reinjection (Off — conversation history only)",
@@ -688,7 +689,7 @@ test("Plan output dir and sandbox rows save through the settings menu", async ()
         kind: "select",
         options: [
           "Plan thinking (inherit)",
-          "Plan policy tools (Automatic safe built-ins)",
+          "Plan policy tools (Automatic admissions)",
           "Delegation agents (plan-scout + verified read-only only)",
           "Delegation scripts (blocked)",
           "Plan reinjection (Off — conversation history only)",

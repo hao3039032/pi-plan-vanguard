@@ -22,8 +22,8 @@ export function buildSandboxPromptSection(sandbox: PlanModePromptSandboxInfo) {
         ? `allowed only for these domains: ${sandbox.allowedDomains.join(", ")}`
         : "denied for every domain";
   const identity = hardened
-    ? "- Identity: the user's credentials are not available in the sandbox (credential stores are unreadable and token variables are removed). Use the network only anonymously: never log in, authenticate, or act as the user, and never change remote state (no pushes, publishes, issue/PR/comment creation, or other mutating requests)."
-    : "- Identity: credential hardening is OFF, so the user's credentials may be reachable. Still never use them: do not log in, authenticate, or act as the user, and never change remote state (no pushes, publishes, issue/PR/comment creation, or other mutating requests).";
+    ? "- Identity (sandboxed shell commands): the user's credentials are not available in the sandbox (credential stores are unreadable and token variables are removed). Shell commands must use the network only anonymously: never log in, authenticate, or act as the user, and never change remote state (no pushes, publishes, issue/PR/comment creation, or other mutating requests)."
+    : "- Identity (sandboxed shell commands): credential hardening is OFF, so the user's credentials may be reachable. Shell commands must still never use them and must use the network only anonymously: do not log in, authenticate, or act as the user, and never change remote state (no pushes, publishes, issue/PR/comment creation, or other mutating requests).";
   return [
     "## Sandboxed exploration",
     "",
@@ -31,6 +31,7 @@ export function buildSandboxPromptSection(sandbox: PlanModePromptSandboxInfo) {
     `- Filesystem: reads are allowed everywhere except denied secret paths; writes are allowed only in: ${sandbox.writePaths.join(", ")}, plus a private scratch directory exported as $TMPDIR (use it instead of /tmp, which is read-only).`,
     `- Network: ${network}.`,
     identity,
+    "- These shell-only identity restrictions do not restrict the permitted codemode model-provider bridge described above, which uses session credentials outside SRT; they still apply to every shell call, including tools.bash from codemode.",
     "- A failure like 'Operation not permitted', 'EPERM', or a proxy block is the sandbox boundary. Do not retry the same operation with different syntax; note the constraint in the plan instead.",
     `- You may draft and iterate the plan as Markdown files in ${sandbox.planOutputDir}/, from the shell or with the write/edit tools (which work only for files inside that directory); the user sees updates in the TUI (/plan show). The decision-ready plan itself must still be submitted with plan_mode_complete.`,
   ].join("\n");
@@ -55,7 +56,8 @@ You are in Plan Mode, a Codex-like collaboration mode for producing a decision-c
 
 - Stay in Plan Mode until a developer or extension explicitly exits it.
 - Treat requests to implement as requests to plan the implementation; do not edit files or carry out the plan.
-- While Plan Mode is active the tool policy does not change the declared tool set; entering and leaving it declares and retracts the two Plan helper tools. Harmless tools (readers, sandboxed bash, read-only-hinted extension/MCP tools, and the built-in codemode JS sandbox whose nested calls are individually policy-checked) are admitted automatically; tools that can mutate or reach unknown systems require the user's explicit selection. Direct and model-only tools must be active to be called; registered codemode or deferred tools may be selected without activation and then run through other tools. Every nested call is checked on its own; selecting a tool does not authorize the tools it calls. In codemode scripts, call other tools through tools.<name>; each nested call is policy-checked exactly like a direct one.
+- While Plan Mode is active the tool policy does not change the declared tool set; entering and leaving it declares and retracts the two Plan helper tools. Readers, sandboxed bash, and read-only-hinted extension/MCP tools are admitted automatically. As an explicit product-policy exception, Pi's full built-in codemode is also default-admitted, including models.*; other tools that can mutate or reach unknown systems require the user's explicit selection. Default admission does not activate tools: codemode must already be enabled in Pi (for example defaultTools: ["+codemode"]). Direct and model-only tools must be active to be called; model-only codemode cannot be called by other tools. Registered tools with codemode or deferred exposure may be selected without activation and run through other tools.
+- In codemode scripts, tools.<name> calls are individually Plan-policy-checked: bash remains SRT-wrapped and write/edit restrictions and other tools' opt-in requirements still apply. The models.classify/models.generateImages bridge instead calls providers directly with the session's credentials, may transmit data and incur costs, and is not checked by the nested-tool policy or SRT. Pi's store() persists session state; image() and oversized output can write host-managed temporary files outside the nested-tool checks, not arbitrary paths chosen by the script. These full built-in codemode capabilities are allowed by the Plan product policy; use them only for the requested planning work.
 - Do not perform mutating actions: no edit/write tools (except for plan Markdown files in the plan output directory), no patching, no formatting that rewrites files, no dependency installation, no commits, no migrations.
 
 ${sandboxSection}## Phase 1 — Ground in the environment

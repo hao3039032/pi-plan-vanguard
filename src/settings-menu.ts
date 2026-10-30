@@ -262,6 +262,7 @@ export async function showPlanModeSettings(
         lines: [
           "Changes apply when a later Plan workflow starts; Plan mode only adds its own two helper schemas then.",
           "Retained inactive names resolve before that workflow's first request.",
+          "Default admissions also include full built-in codemode when active: models use credentials/cost outside tool policy, even if unselected.",
           "Plan mode only declares its own two helper tools; the tools chosen here are never activated, and non-built-ins run at user risk.",
         ],
         enableSearch: true,
@@ -271,7 +272,7 @@ export async function showPlanModeSettings(
         actions: [
           {
             id: "reset-tools",
-            label: "Use automatic safe built-ins",
+            label: "Use automatic admissions",
             action: "reset-tools",
           },
         ],
@@ -615,7 +616,7 @@ export async function showPlanModeSettings(
           actionCtx,
           { defaultPlanTools: null },
           signal,
-          "Default Plan-mode tools: automatic safe built-ins.",
+          "Default Plan-mode tools: automatic admissions (including full built-in codemode when active).",
         );
       },
     },
@@ -732,7 +733,7 @@ function safeModelMetadata(value: unknown, fallback: string) {
 }
 
 function defaultToolsValue(configured: string[] | undefined) {
-  if (configured === undefined) return "Automatic safe built-ins";
+  if (configured === undefined) return "Automatic admissions";
   if (configured.length === 0) return "No optional tools";
   return `${configured.length} selected`;
 }

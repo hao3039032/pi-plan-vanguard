@@ -57,6 +57,11 @@ export function builtinExtensionEntryTool(name: string, options: NativeToolOptio
   return nativeTool({ name, source: "builtin", path: `builtin:${name}`, ...options });
 }
 
+/** Pi 1.4's entry definition is model-only and registered defaultActive: false (not in ToolInfo). */
+export function builtinCodemodeTool(): ToolInfo {
+  return builtinExtensionEntryTool("codemode", { exposure: "model-only" });
+}
+
 export function extensionTool(name: string, options: NativeToolOptions = {}): ToolInfo {
   return nativeTool({ name, source: "extension", ...options });
 }

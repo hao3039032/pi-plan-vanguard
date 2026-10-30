@@ -5,7 +5,6 @@ import {
   canSelectToolInPlanMode,
   classifyPlanModeTool,
   isAutoAdmittedPlanTool,
-  isBuiltinCodemodeTool,
   isBuiltinTool,
 } from "./tool-policy.js";
 
@@ -31,10 +30,9 @@ export function toolPolicyLabel(tool: ToolInfo) {
   if (policy === "read-only") {
     return isBuiltinTool(tool) ? "built-in read-only" : `read-only hinted: ${toolSourceLabel(tool)}`;
   }
-  if (policy === "sandboxed") {
-    return isBuiltinCodemodeTool(tool)
-      ? "built-in codemode · JS sandbox, nested calls policy-checked"
-      : "built-in · SRT-sandboxed shell";
+  if (policy === "sandboxed") return "built-in · SRT-sandboxed shell";
+  if (policy === "builtin-codemode") {
+    return "built-in codemode · default-admitted; models use credentials/cost outside tool policy";
   }
   return `user opt-in: ${toolSourceLabel(tool)}`;
 }
@@ -139,8 +137,8 @@ export function filterAvailableSelectedToolNames(
 
 export function defaultPlanModeToolNames(tools: ToolInfo[], configuredNames: string[] | undefined) {
   if (configuredNames !== undefined) return unique(configuredNames);
-  // Automatic policy: every harmless tool (sandboxed bash, read-only built-ins and read-only
-  // hinted extension/MCP tools) is admitted without selection.
+  // Default admissions include readers, sandboxed bash, read-only-hinted tools, and the full
+  // built-in codemode capability (including credentialed models), not just harmless tools.
   return tools.filter((tool) => isAutoAdmittedPlanTool(tool)).map((tool) => tool.name);
 }
 

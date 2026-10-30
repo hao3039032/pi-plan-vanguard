@@ -6,7 +6,7 @@ import {
   filterAvailableSelectedToolNames,
   planModeToolSelection,
 } from "../src/tool-selection.js";
-import { builtinExtensionEntryTool, builtinExtensionTool, builtinTool, extensionTool, nativeTool } from "./tool-exposure-support.js";
+import { builtinCodemodeTool, builtinExtensionEntryTool, builtinExtensionTool, builtinTool, extensionTool, nativeTool } from "./tool-exposure-support.js";
 
 const active = (names: string[]) => new Set(names);
 
@@ -74,16 +74,15 @@ test("core built-ins keep their classification; built-in extension tools take th
 });
 
 test("built-in extension entry tools named after their extension are not core built-ins", () => {
-  // Pi's codemode extension registers a `codemode` tool whose extension path (builtin:codemode)
-  // is identical to the core-built-in pattern `builtin:<name>`; before the collision guard it
-  // was classified "blocked" and could not even be selected explicitly.
+  // Synthetic direct exposure checks the path-collision guard, not Pi's actual codemode.
+  // The real model-only entry was already excluded from core classification before 0.65.0.
   const codemode = builtinExtensionEntryTool("codemode");
   assert.equal(isBuiltinTool(codemode), false);
-  assert.equal(classifyPlanModeTool(codemode), "sandboxed");
+  assert.equal(classifyPlanModeTool(codemode), "builtin-codemode");
   assert.equal(canSelectToolInPlanMode(codemode), true);
   assert.equal(isAutoAdmittedPlanTool(codemode), true);
 
-  // The mcp extension's `mcp` entry tool has the same collision but stays explicit opt-in.
+  // A synthetic direct `mcp` entry has the same path collision but stays explicit opt-in.
   const mcpEntry = builtinExtensionEntryTool("mcp");
   assert.equal(isBuiltinTool(mcpEntry), false);
   assert.equal(classifyPlanModeTool(mcpEntry), "user-opt-in");
@@ -95,9 +94,35 @@ test("built-in extension entry tools named after their extension are not core bu
   assert.equal(classifyPlanModeTool(replacement), "user-opt-in");
   assert.equal(isAutoAdmittedPlanTool(replacement), false);
 
-  // A read-only-hinted entry tool still takes the annotation path first.
+  // The full-capability policy is explicit even if an annotation claims read-only.
   const hinted = builtinExtensionEntryTool("codemode", { readOnlyHint: true });
-  assert.equal(classifyPlanModeTool(hinted), "read-only");
+  assert.equal(classifyPlanModeTool(hinted), "builtin-codemode");
+
+  // Only the exact name/source/path tuple receives this special policy.
+  for (const tool of [
+    nativeTool({ name: "another_tool", source: "builtin", path: "builtin:codemode" }),
+    nativeTool({ name: "codemode", source: "local", path: "builtin:codemode" }),
+    nativeTool({ name: "codemode", source: "builtin", path: "builtin:mcp" }),
+  ]) {
+    assert.equal(classifyPlanModeTool(tool), "user-opt-in");
+    assert.equal(isAutoAdmittedPlanTool(tool), false);
+  }
+});
+
+test("real model-only codemode metadata preserves activation and non-nestable boundaries", () => {
+  const tool = builtinCodemodeTool();
+  assert.equal(tool.exposure, "model-only");
+  assert.equal(isBuiltinTool(tool), false);
+  assert.equal(classifyPlanModeTool(tool), "builtin-codemode");
+  assert.equal(isAutoAdmittedPlanTool(tool), true);
+  for (const route of ["selection", "model"] as const) {
+    assert.equal(planModeToolAvailability(tool, active([]), route), "inactive");
+    assert.equal(planModeToolAvailability(tool, active(["codemode"]), route), "available");
+  }
+  assert.equal(planModeToolAvailability(tool, active([]), "nested"), "model-only");
+  assert.equal(planModeToolAvailability(tool, active(["codemode"]), "nested"), "model-only");
+  assert.deepEqual(filterAvailableSelectedToolNames(["codemode"], [tool], active([])), []);
+  assert.deepEqual(filterAvailableSelectedToolNames(["codemode"], [tool], active(["codemode"])), ["codemode"]);
 });
 
 test("extension tools without annotations stay explicit opt-in; read-only hints stay automatic", () => {
@@ -138,14 +163,15 @@ test("planModeToolSelection renders labels, guidance, and exposure notes for unt
   assert.ok(codemode.description.includes("callable via other tools"));
   assert.ok(!codemode.disabled);
 
-  // The built-in codemode entry tool renders its own sandboxed label and stays selectable while active.
+  // The real model-only entry labels full admission rather than claiming read-only/sandbox safety.
   const codemodeEntry = planModeToolSelection(
-    builtinExtensionEntryTool("codemode"),
+    builtinCodemodeTool(),
     active(["codemode"]),
     false,
   );
   assert.equal(codemodeEntry.label, "codemode");
-  assert.ok(codemodeEntry.description.includes("JS sandbox, nested calls policy-checked"));
+  assert.ok(codemodeEntry.description.includes("default-admitted; models use credentials/cost outside tool policy"));
+  assert.ok(!codemodeEntry.description.includes("SRT-sandboxed"));
   assert.ok(!codemodeEntry.disabled);
 
   const modelOnly = planModeToolSelection(

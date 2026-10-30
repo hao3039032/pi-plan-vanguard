@@ -3,6 +3,7 @@
 [Back to README](../README.md)
 
 - [Default Plan policy tools](#default-plan-policy-tools)
+- [Codemode policy](#codemode-policy)
 - [Enable inactive built-in search tools in Pi](#enable-inactive-built-in-search-tools)
 - [Delegation admission](#delegation-admission)
 - [Plan reinjection](#plan-reinjection)
@@ -57,8 +58,8 @@ The retired `toolVisibility` key is ignored and preserved as unknown data when a
 ### Default Plan policy tools
 
 `defaultPlanTools` defines the initial runtime allowlist when a session has no stored pre-start selection.
-Omit it—or choose **Use automatic safe built-ins**—to allow already-active safe built-ins by default.
-An explicit empty array appears as **No optional tools** and denies every ordinary tool while the required helpers remain callable in Plan mode.
+Omit it to use default admissions: readers, sandboxed bash, read-only-hinted extension/MCP tools, and Pi's full built-in codemode when available.
+An explicit empty array appears as **No optional tools** and selects no additional opt-in tools; default-admitted tools (including codemode) still require no selection and are admitted on first use. Required helpers remain callable in Plan mode.
 Neither setting changes model-visible tool schemas.
 
 Tool names must be non-empty strings; duplicates are removed in first-seen order.
@@ -67,18 +68,38 @@ The inactive menu takes a fresh registered and active tool snapshot each time it
 At the workflow's first provider-bound context, after every `before_agent_start` handler has settled, Plan mode resolves retained names against Pi's live registered and active tools and freezes the executable allowlist.
 Automatic defaults recheck the effective source metadata at that boundary, so a custom override of a safe built-in name still requires explicit opt-in.
 The resolved allowlist persists with the active workflow and restores without reopening the resolution boundary after reload, resume, or tree navigation.
-Unknown, inactive, and Plan-mode-blocked names remain unavailable after that resolution, and a later registration or activation waits for the next Plan workflow rather than a new session.
+Unknown, inactive, and Plan-mode-blocked names remain unavailable until eligible. Default-admitted tools and explicitly selected tools may be admitted on first use after later activation; other unselected opt-in tools stay blocked.
 Settings shows unresolved names as pending registration; resetting to automatic removes the entire override.
 Non-built-in names in this global setting are an explicit user-risk opt-in, just like selecting them in the pre-start workflow selector.
 Plan mode does not interpret a selected custom tool's arguments or actions: allowing one trusts the whole effective tool.
 Native MCP tools and tools from Pi's built-in extensions follow the same rule as ordinary extension tools: they are auto-admitted when their `readOnlyHint` annotation marks them non-mutating, and every other one requires an explicit selection like this.
-Pi's own `codemode` entry tool is the one exception: its scripts run in a JS sandbox and reach the host only through nested calls that the Plan policy checks individually, so it is auto-admitted like the sandboxed shell (a replacement codemode extension loaded from a file path stays opt-in).
+Pi's full built-in `codemode` entry tool is the explicit product-policy exception, default-admitted with the capabilities described below; it is not classified as read-only or SRT-sandboxed. A replacement codemode extension loaded from a file path follows the ordinary annotation/opt-in rule.
 Pi resolves tools by name, so if an extension overrides a built-in name, the effective extension tool is selected instead.
 An effective active tool named `bash` runs inside the srt OS sandbox regardless of its source metadata; `powershell` is blocked during Plan mode in v1.
 
 A selection accepted through **Choose tools, then start…** or `/plan tools` is stored in that Pi session and takes precedence over `defaultPlanTools` when the session resumes.
 The global setting remains the policy baseline for fresh sessions and sessions without an explicit selection.
 Settings saves immediately, but saved policy names and thinking apply only when a later Plan workflow starts; they never mutate active schemas or a workflow already in progress.
+
+### Codemode policy
+
+Plan mode default-admits the **full** built-in `codemode` entry tool once it is active in Pi. Enable it through Pi settings, preserving existing tool entries (on Pi with modifier support):
+
+```json
+{
+  "defaultTools": ["+codemode"]
+}
+```
+
+Or use `pi --tools +codemode`. Plan admission does not activate it, override Pi's tool exclusions, or allow another tool to call this `model-only` entry. Tools with `codemode` exposure are different: that exposure means they can be called *from* scripts.
+
+This policy intentionally includes more than nested tool orchestration:
+
+- `tools.*` calls are individually checked by Plan policy. Bash remains SRT-wrapped, write/edit remain restricted to the plan output directory, and other opt-in tools still need selection.
+- `models.classify()` and `models.generateImages()` call providers directly using the session's credentials. They may send data and incur costs; they do **not** pass through nested `tool_call` checks or the SRT sandbox. Plan mode permits these full built-in capabilities by default, including with `defaultPlanTools: []`.
+- `store()` persists session state on success. `image()` and oversized text output can create Pi-managed temporary files. These host-side effects also bypass nested-tool checks, but do not grant arbitrary script-chosen filesystem write paths.
+
+To make codemode unavailable, disable it through Pi's tool selection (for example `--exclude-tools codemode`); removing it from the Plan selection alone does not disable a default-admitted capability. The sandbox's credential hardening and network policy govern shell commands, not codemode's model-provider bridge.
 
 ### Enable inactive built-in search tools
 
@@ -220,7 +241,7 @@ A missing file stays absent until an explicit save.
 Invalid JSON, invalid values, oversized content, non-regular files, and read failures make Settings read-only; the existing bytes and previous effective settings remain.
 This in-process queue is not a cross-process lock, so concurrent separate Pi processes can still race.
 
-Invalid settings produce a warning and fall back to inherited Plan thinking, available safe-built-in tool defaults, `clear-on-start`, same-as-plan fresh runtime choices, and `PLAN.md`.
+Invalid settings produce a warning and fall back to inherited Plan thinking, automatic tool admissions (including full built-in codemode when available), `clear-on-start`, same-as-plan fresh runtime choices, and `PLAN.md`.
 Compatibility: the former filenames `pi-plan-mode.json` and `plan-mode.json` remain readable legacy settings (newest wins when several exist).
 A valid legacy file is never modified automatically; a warning shows which file is in use.
 If Settings is explicitly saved while only legacy files exist, the extension creates canonical `pi-plan-vanguard.json` from the complete newest legacy document, applies the selected change, preserves unknown fields, and leaves every legacy file untouched.

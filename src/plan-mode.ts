@@ -2416,13 +2416,13 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
     return true;
   }
 
-  // Harmless tools (sandboxed bash, read-only built-ins/annotations, session tools) never need
-  // explicit selection: admit them on first use even when they became available after the freeze.
+  // Default-admitted tools (including full built-in codemode) need no explicit selection:
+  // admit them on first use even when they became available after the freeze.
   function admitLateActivatedPlanTool(toolName: string, ctx: ExtensionContext) {
     // Explicitly selected tools keep the fork's late-admission behavior.
     if (admitLateActivatedExplicitTool(toolName, ctx)) return true;
-    // Harmless tools (sandboxed bash, readers, read-only hinted extensions, session tools)
-    // never need selection and are admitted on first use whenever they are available.
+    // Availability was checked above: this does not activate codemode or make model-only
+    // tools nestable. Full built-in codemode is a product-policy exception, not read-only.
     const calledTool = toolByName(toolName);
     if (!calledTool || !isAutoAdmittedPlanTool(calledTool)) return false;
     return admitUnselectedAutoTool(toolName, ctx);
@@ -3026,7 +3026,7 @@ export default function planMode(pi: ExtensionAPI, dependencies: PlanModeDepende
       .filter((name) => !names.includes(name));
     const listed = [...names, ...autoNames];
     return [
-      `Plan tools: ${listed.length > 0 ? listed.join(", ") : "none"} (harmless tools need no selection).`,
+      `Plan tools: ${listed.length > 0 ? listed.join(", ") : "none"} (default-admitted tools, including full built-in codemode, need no selection).`,
       "Bash runs any command inside the srt sandbox; write/edit stay limited to the plan output dir.",
     ].join(" ");
   }
