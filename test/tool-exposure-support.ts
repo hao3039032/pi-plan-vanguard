@@ -51,6 +51,12 @@ export function builtinExtensionTool(name: string, options: NativeToolOptions = 
   return nativeTool({ name, source: "builtin", path: "builtin:mcp", ...options });
 }
 
+export function builtinExtensionEntryTool(name: string, options: NativeToolOptions = {}): ToolInfo {
+  // An entry tool named after its built-in extension (codemode at builtin:codemode, mcp at
+  // builtin:mcp) carries a path that looks exactly like a core built-in's `builtin:<name>`.
+  return nativeTool({ name, source: "builtin", path: `builtin:${name}`, ...options });
+}
+
 export function extensionTool(name: string, options: NativeToolOptions = {}): ToolInfo {
   return nativeTool({ name, source: "extension", ...options });
 }

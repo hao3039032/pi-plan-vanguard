@@ -1,6 +1,10 @@
 # @hao3039032/pi-plan-vanguard
 
-## Unreleased
+## 0.65.0 (fork)
+
+### Minor Changes
+
+- **Pi's built-in `codemode` entry tool is now auto-admitted in Plan mode and works by default.** The tool was previously unreachable: Pi's built-in extensions (codemode, mcp, tool-search) load from synthetic paths (`builtin:codemode`), and an entry tool named after its extension produces a path identical to the core-built-in pattern (`builtin:codemode` = `builtin:<tool-name>`), so `isBuiltinTool()` classified it as a core built-in outside the safe list — "blocked", unselectable even through `/plan tools` or `defaultPlanTools`, and every call refused with "its built-in policy is blocked and settings cannot enable it". The collision guard excludes built-in extension names from the core-tool pattern, and the codemode entry tool is classified `sandboxed`: its scripts run in a QuickJS JS sandbox with no host access of their own, and every tool effect flows through nested calls that the Plan policy already checks individually (bash stays SRT-wrapped, edit/write stay blocked outside the plan output directory, opt-in tools stay opt-in), so the orchestrator needs no explicit selection. The `mcp` entry tool gets the same misclassification fix but stays explicit opt-in, and a replacement codemode extension loaded from a file path keeps the documented opt-in rule. The Plan contract now tells the model that codemode is admitted and that each nested call is policy-checked exactly like a direct one.
 
 ### Patch Changes
 

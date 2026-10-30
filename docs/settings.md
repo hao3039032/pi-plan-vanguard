@@ -72,6 +72,7 @@ Settings shows unresolved names as pending registration; resetting to automatic 
 Non-built-in names in this global setting are an explicit user-risk opt-in, just like selecting them in the pre-start workflow selector.
 Plan mode does not interpret a selected custom tool's arguments or actions: allowing one trusts the whole effective tool.
 Native MCP tools and tools from Pi's built-in extensions follow the same rule as ordinary extension tools: they are auto-admitted when their `readOnlyHint` annotation marks them non-mutating, and every other one requires an explicit selection like this.
+Pi's own `codemode` entry tool is the one exception: its scripts run in a JS sandbox and reach the host only through nested calls that the Plan policy checks individually, so it is auto-admitted like the sandboxed shell (a replacement codemode extension loaded from a file path stays opt-in).
 Pi resolves tools by name, so if an extension overrides a built-in name, the effective extension tool is selected instead.
 An effective active tool named `bash` runs inside the srt OS sandbox regardless of its source metadata; `powershell` is blocked during Plan mode in v1.
 

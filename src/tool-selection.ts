@@ -5,6 +5,7 @@ import {
   canSelectToolInPlanMode,
   classifyPlanModeTool,
   isAutoAdmittedPlanTool,
+  isBuiltinCodemodeTool,
   isBuiltinTool,
 } from "./tool-policy.js";
 
@@ -30,7 +31,11 @@ export function toolPolicyLabel(tool: ToolInfo) {
   if (policy === "read-only") {
     return isBuiltinTool(tool) ? "built-in read-only" : `read-only hinted: ${toolSourceLabel(tool)}`;
   }
-  if (policy === "sandboxed") return "built-in · SRT-sandboxed shell";
+  if (policy === "sandboxed") {
+    return isBuiltinCodemodeTool(tool)
+      ? "built-in codemode · JS sandbox, nested calls policy-checked"
+      : "built-in · SRT-sandboxed shell";
+  }
   return `user opt-in: ${toolSourceLabel(tool)}`;
 }
 

@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 import { planModeToolAvailability } from "../src/tool-availability.js";
-import { classifyPlanModeTool, isBuiltinTool } from "../src/tool-policy.js";
+import { canSelectToolInPlanMode, classifyPlanModeTool, isAutoAdmittedPlanTool, isBuiltinTool } from "../src/tool-policy.js";
 import {
   filterAvailableSelectedToolNames,
   planModeToolSelection,
 } from "../src/tool-selection.js";
-import { builtinExtensionTool, builtinTool, extensionTool, nativeTool } from "./tool-exposure-support.js";
+import { builtinExtensionEntryTool, builtinExtensionTool, builtinTool, extensionTool, nativeTool } from "./tool-exposure-support.js";
 
 const active = (names: string[]) => new Set(names);
 
@@ -73,6 +73,33 @@ test("core built-ins keep their classification; built-in extension tools take th
   assert.equal(classifyPlanModeTool({ ...builtinTool("read"), sourceInfo: { ...builtinTool("read").sourceInfo, source: "" } }), "blocked");
 });
 
+test("built-in extension entry tools named after their extension are not core built-ins", () => {
+  // Pi's codemode extension registers a `codemode` tool whose extension path (builtin:codemode)
+  // is identical to the core-built-in pattern `builtin:<name>`; before the collision guard it
+  // was classified "blocked" and could not even be selected explicitly.
+  const codemode = builtinExtensionEntryTool("codemode");
+  assert.equal(isBuiltinTool(codemode), false);
+  assert.equal(classifyPlanModeTool(codemode), "sandboxed");
+  assert.equal(canSelectToolInPlanMode(codemode), true);
+  assert.equal(isAutoAdmittedPlanTool(codemode), true);
+
+  // The mcp extension's `mcp` entry tool has the same collision but stays explicit opt-in.
+  const mcpEntry = builtinExtensionEntryTool("mcp");
+  assert.equal(isBuiltinTool(mcpEntry), false);
+  assert.equal(classifyPlanModeTool(mcpEntry), "user-opt-in");
+  assert.equal(canSelectToolInPlanMode(mcpEntry), true);
+  assert.equal(isAutoAdmittedPlanTool(mcpEntry), false);
+
+  // A replacement codemode extension loaded from a real path keeps the documented opt-in rule.
+  const replacement = nativeTool({ name: "codemode", source: "local" });
+  assert.equal(classifyPlanModeTool(replacement), "user-opt-in");
+  assert.equal(isAutoAdmittedPlanTool(replacement), false);
+
+  // A read-only-hinted entry tool still takes the annotation path first.
+  const hinted = builtinExtensionEntryTool("codemode", { readOnlyHint: true });
+  assert.equal(classifyPlanModeTool(hinted), "read-only");
+});
+
 test("extension tools without annotations stay explicit opt-in; read-only hints stay automatic", () => {
   assert.equal(classifyPlanModeTool(extensionTool("web_search")), "user-opt-in");
   assert.equal(
@@ -110,6 +137,16 @@ test("planModeToolSelection renders labels, guidance, and exposure notes for unt
   );
   assert.ok(codemode.description.includes("callable via other tools"));
   assert.ok(!codemode.disabled);
+
+  // The built-in codemode entry tool renders its own sandboxed label and stays selectable while active.
+  const codemodeEntry = planModeToolSelection(
+    builtinExtensionEntryTool("codemode"),
+    active(["codemode"]),
+    false,
+  );
+  assert.equal(codemodeEntry.label, "codemode");
+  assert.ok(codemodeEntry.description.includes("JS sandbox, nested calls policy-checked"));
+  assert.ok(!codemodeEntry.disabled);
 
   const modelOnly = planModeToolSelection(
     builtinExtensionTool("internal_probe", { exposure: "model-only", readOnlyHint: true }),
